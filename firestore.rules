@@ -30,7 +30,7 @@ service cloud.firestore {
 
     match /staff/{staffId} {
       allow read: if approved();
-      allow write: if treasurerOrAdmin();
+      allow write: if admin();
     }
 
     match /events/{eventId} {

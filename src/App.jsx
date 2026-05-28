@@ -71,6 +71,8 @@ const EXPENSE_CATEGORIES = [
   'Communication',
   'Other'
 ];
+const STAFF_CATEGORIES = ['Academic', 'Non Academic', 'Attachment'];
+const STAFF_SERVICE_STATUSES = ['Active', 'Transferred', 'Temporary attachment to another school'];
 
 const currency = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -104,7 +106,9 @@ function normalizeStaffRows(rows) {
     name: find('name'),
     email: find('email'),
     phone: find('phone'),
-    section: find('section')
+    category: find('category') >= 0 ? find('category') : find('section'),
+    serviceStatus: find('service status') >= 0 ? find('service status') : find('status'),
+    statusDate: find('status date') >= 0 ? find('status date') : find('date')
   };
   if (indexes.employeeId < 0 || indexes.name < 0) {
     throw new Error('Employee ID and Name columns are required.');
@@ -119,7 +123,9 @@ function normalizeStaffRows(rows) {
       name,
       email: String(row[indexes.email] || '').trim(),
       phone: String(row[indexes.phone] || '').trim(),
-      section: String(row[indexes.section] || '').trim(),
+      category: String(row[indexes.category] || 'Academic').trim(),
+      serviceStatus: String(row[indexes.serviceStatus] || 'Active').trim(),
+      statusDate: String(row[indexes.statusDate] || '').trim(),
       updatedAt: new Date().toISOString()
     };
   }).filter(Boolean);
@@ -361,20 +367,31 @@ function StaffPage({ user, staff, reload }) {
   const [bulk, setBulk] = useState(false);
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ employeeId: '', name: '', email: '', phone: '', section: '' });
-  const authorized = canManage(user);
-  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, s.section].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const emptyStaffForm = { employeeId: '', name: '', email: '', phone: '', category: 'Academic', serviceStatus: 'Active', statusDate: '' };
+  const [form, setForm] = useState(emptyStaffForm);
+  const authorized = user.role === 'admin';
+  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, s.category || s.section, s.serviceStatus].join(' ').toLowerCase().includes(search.toLowerCase()));
 
   const open = (item = null) => {
     setEditing(item);
-    setForm(item || { employeeId: '', name: '', email: '', phone: '', section: '' });
+    setForm(item ? {
+      ...emptyStaffForm,
+      ...item,
+      category: item.category || item.section || 'Academic',
+      serviceStatus: item.serviceStatus || 'Active',
+      statusDate: item.statusDate || ''
+    } : emptyStaffForm);
     setModal(true);
   };
 
   const save = async (event) => {
     event.preventDefault();
+    if (form.serviceStatus !== 'Active' && !form.statusDate) {
+      alert('Please add the date for transferred or temporary attachment status.');
+      return;
+    }
     const id = editing?.id || form.employeeId.trim();
-    await setDoc(doc(db, 'staff', id), { ...form, id, employeeId: id, updatedAt: new Date().toISOString() });
+    await setDoc(doc(db, 'staff', id), { ...form, id, employeeId: id, statusDate: form.serviceStatus === 'Active' ? '' : form.statusDate, updatedAt: new Date().toISOString() });
     setModal(false);
     reload();
   };
@@ -388,7 +405,15 @@ function StaffPage({ user, staff, reload }) {
 
   const exportStaff = () => downloadWorkbook('kcc-guild-staff.xlsx', [[
     'Staff',
-    staff.map((s) => ({ 'Employee ID': s.employeeId, Name: s.name, Email: s.email, Phone: s.phone, Section: s.section }))
+    staff.map((s) => ({
+      'Employee ID': s.employeeId,
+      Name: s.name,
+      Email: s.email,
+      Phone: s.phone,
+      Category: s.category || s.section || '',
+      'Service Status': s.serviceStatus || 'Active',
+      'Status Date': s.statusDate || ''
+    }))
   ]]);
 
   return (
@@ -403,10 +428,10 @@ function StaffPage({ user, staff, reload }) {
         </>}
       />
       <SearchBox value={search} onChange={setSearch} placeholder="Search staff..." />
-      <DataTable headers={['ID', 'Name', 'Email', 'Phone', 'Section', authorized ? 'Actions' : '']}>
+      <DataTable headers={['ID', 'Name', 'Email', 'Phone', 'Category', 'Status', 'Status Date', authorized ? 'Actions' : '']}>
         {visible.map((s) => (
           <tr key={s.id}>
-            <td>{s.employeeId}</td><td><strong>{s.name}</strong></td><td>{s.email}</td><td>{s.phone}</td><td>{s.section}</td>
+            <td>{s.employeeId}</td><td><strong>{s.name}</strong></td><td>{s.email}</td><td>{s.phone}</td><td>{s.category || s.section}</td><td>{s.serviceStatus || 'Active'}</td><td>{s.statusDate || '-'}</td>
             {authorized && <td className="table-actions"><button onClick={() => open(s)}>Edit</button><button onClick={() => remove(s)}>Delete</button></td>}
           </tr>
         ))}
@@ -418,7 +443,9 @@ function StaffPage({ user, staff, reload }) {
           <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
           <label>Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
           <label>Phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
-          <label>Section<input value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
+          <label>Category<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{STAFF_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
+          <label>Service Status<select value={form.serviceStatus} onChange={(e) => setForm({ ...form, serviceStatus: e.target.value, statusDate: e.target.value === 'Active' ? '' : form.statusDate })}>{STAFF_SERVICE_STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
+          {form.serviceStatus !== 'Active' && <label>Status Date<input type="date" value={form.statusDate} onChange={(e) => setForm({ ...form, statusDate: e.target.value })} required /></label>}
           <footer><button className="primary-btn">Save Staff</button></footer>
         </form>
       </Modal>}
@@ -462,13 +489,18 @@ function BulkUploadModal({ onClose, reload }) {
 
   const template = () => downloadWorkbook('kcc-staff-template.xlsx', [[
     'Template',
-    [['Employee ID', 'Name', 'Email', 'Phone', 'Section'], ['EMP001', 'Teacher Name', 'teacher@example.com', '0770000000', 'Science']]
+    [
+      ['Employee ID', 'Name', 'Email', 'Phone', 'Category', 'Service Status', 'Status Date'],
+      ['EMP001', 'Teacher Name', 'teacher@example.com', '0770000000', 'Academic', 'Active', ''],
+      ['EMP002', 'Office Staff Name', 'office@example.com', '0770000001', 'Non Academic', 'Transferred', '2026-05-28'],
+      ['EMP003', 'Attachment Staff Name', 'attach@example.com', '0770000002', 'Attachment', 'Temporary attachment to another school', '2026-05-28']
+    ]
   ]]);
 
   return (
     <Modal title="Bulk Upload Staff" onClose={onClose}>
       <div className="modal-body">
-        <p className="muted">Upload `.xlsx`, `.xls`, or `.csv` with Employee ID, Name, Email, Phone, Section.</p>
+        <p className="muted">Upload `.xlsx`, `.xls`, or `.csv` with Employee ID, Name, Email, Phone, Category, Service Status, Status Date.</p>
         <div className="row-actions">
           <button className="secondary-btn" onClick={template}><Download size={16} />Template</button>
           <label className="file-btn"><Upload size={16} />Choose File<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => readFile(e.target.files[0])} /></label>
@@ -500,6 +532,7 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({ name: '', date: today(), amount: '', exemptIds: [] });
   const authorized = canManage(user);
+  const activeStaff = staff.filter((person) => (person.serviceStatus || 'Active') === 'Active');
 
   const create = async (event) => {
     event.preventDefault();
@@ -507,7 +540,7 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
     const batch = writeBatch(db);
     const eventData = { id, name: form.name, date: form.date, amount: Number(form.amount), exemptIds: form.exemptIds, createdAt: new Date().toISOString() };
     batch.set(doc(db, 'events', id), eventData);
-    staff.forEach((s) => {
+    activeStaff.forEach((s) => {
       const exempt = form.exemptIds.includes(s.id);
       const cid = `${id}_${s.id}`;
       batch.set(doc(db, 'contributions', cid), { id: cid, eventId: id, staffId: s.id, staffName: s.name, exempt, paid: false, amount: 0, updatedAt: new Date().toISOString() });
@@ -557,7 +590,7 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
           <label>Event Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
           <label>Contribution Per Staff<input type="number" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <div><strong>Exempt event staff</strong><div className="check-grid">
-            {staff.map((s) => <label key={s.id}><input type="checkbox" checked={form.exemptIds.includes(s.id)} onChange={(e) => setForm({ ...form, exemptIds: e.target.checked ? [...form.exemptIds, s.id] : form.exemptIds.filter((id) => id !== s.id) })} />{s.name}</label>)}
+            {activeStaff.map((s) => <label key={s.id}><input type="checkbox" checked={form.exemptIds.includes(s.id)} onChange={(e) => setForm({ ...form, exemptIds: e.target.checked ? [...form.exemptIds, s.id] : form.exemptIds.filter((id) => id !== s.id) })} />{s.name}</label>)}
           </div></div>
           <button className="primary-btn">Create Event</button>
         </form>
@@ -776,7 +809,9 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
       eventDate: event.date,
       employeeId: person.employeeId,
       staffName: person.name,
-      section: person.section || '',
+      category: person.category || person.section || '',
+      serviceStatus: person.serviceStatus || 'Active',
+      statusDate: person.statusDate || '',
       status: exempt ? 'Exempt' : paid ? 'Paid' : 'Unpaid',
       paidAmount,
       dueAmount
@@ -788,7 +823,9 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     return {
       employeeId: person.employeeId,
       staffName: person.name,
-      section: person.section || '',
+      category: person.category || person.section || '',
+      serviceStatus: person.serviceStatus || 'Active',
+      statusDate: person.statusDate || '',
       paidEvents: records.filter((record) => record.status === 'Paid').length,
       unpaidEvents: records.filter((record) => record.status === 'Unpaid').length,
       exemptEvents: records.filter((record) => record.status === 'Exempt').length,
@@ -814,12 +851,12 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const visibleDetails = detailRecords.filter(filterDetails);
   const visibleStaff = staffRecords.filter(filterStaff);
   const rows = view === 'staff'
-    ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.section, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
-    : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.section, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
+    ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.category, record.serviceStatus, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
+    : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.category, record.serviceStatus, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
 
   const headers = view === 'staff'
-    ? ['ID', 'Staff', 'Section', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
-    : ['Event', 'Date', 'ID', 'Staff', 'Section', 'Status', 'Paid', 'Not Paid'];
+    ? ['ID', 'Staff', 'Category', 'Service Status', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
+    : ['Event', 'Date', 'ID', 'Staff', 'Category', 'Service Status', 'Payment Status', 'Paid', 'Not Paid'];
 
   const collected = detailRecords.reduce((sum, record) => sum + record.paidAmount, 0);
   const due = detailRecords.reduce((sum, record) => sum + record.dueAmount, 0);
@@ -845,7 +882,9 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         Date: record.eventDate,
         ID: record.employeeId,
         Staff: record.staffName,
-        Section: record.section,
+        Category: record.category,
+        'Service Status': record.serviceStatus,
+        'Status Date': record.statusDate,
         Status: record.status,
         Paid: record.paidAmount,
         'Not Paid': record.dueAmount
@@ -853,7 +892,9 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
       ['Staff Summary', visibleStaff.map((record) => ({
         ID: record.employeeId,
         Staff: record.staffName,
-        Section: record.section,
+        Category: record.category,
+        'Service Status': record.serviceStatus,
+        'Status Date': record.statusDate,
         'Paid Events': record.paidEvents,
         'Unpaid Events': record.unpaidEvents,
         'Exempt Events': record.exemptEvents,

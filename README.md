@@ -7,7 +7,7 @@ React + Firebase account management system for the Kilinochchi Central College S
 - Firebase Authentication with Email/Password and Google sign-in.
 - First registered user becomes `admin`; new users stay `pending` until an admin approves them.
 - Admin can grant `treasurer` access for account handling.
-- Staff registry with manual entry, Excel/CSV bulk upload, and Excel export.
+- Admin-only staff registry with manual entry, Excel/CSV bulk upload, Excel export, category, and service status tracking.
 - Event contribution tracking with organizer/staff exemptions.
 - Paid/unpaid contribution marking per event, including custom collected amounts.
 - Event reports showing paid staff, unpaid staff, collected totals, expenses, surplus, or deficit.
@@ -49,7 +49,8 @@ The rules allow:
 
 - Signed-in users to create their own profile.
 - Approved users to read guild data.
-- Treasurer/admin users to manage staff, events, contributions, expenses, and bill uploads.
+- Treasurer/admin users to manage events, contributions, expenses, and bill uploads.
+- Admin users to manage staff details.
 - Admin users to approve users and assign roles.
 
 ## Local Development
