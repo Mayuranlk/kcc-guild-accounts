@@ -815,20 +815,20 @@ function ReportsPage({ staff, events, contributions, expenses }) {
   const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
   const createPdf = () => {
     if (!report.rows.length) return;
-    const pdf = new jsPDF({ orientation: report.orientation || 'landscape', unit: 'mm', format: 'a4' });
+    const pdf = new jsPDF({ orientation: report.pdfOrientation || report.orientation || 'portrait', unit: 'mm', format: 'a4' });
     pdf.setFontSize(14);
     pdf.text(APP_NAME, 14, 14);
     pdf.setFontSize(10);
     pdf.text(report.title, 14, 22);
     autoTable(pdf, {
       startY: 30,
-      head: [report.headers],
-      body: report.rows,
+      head: [report.pdfHeaders || report.headers],
+      body: report.pdfRows || report.rows,
       theme: 'striped',
       margin: { left: 10, right: 10 },
-      headStyles: { fillColor: [41, 128, 185], fontSize: 8, cellPadding: 2 },
-      styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
-      columnStyles: report.columnStyles || {}
+      headStyles: { fillColor: [41, 128, 185], fontSize: report.pdfHeadFontSize || 9, cellPadding: 2 },
+      styles: { fontSize: report.pdfFontSize || 8.5, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
+      columnStyles: report.pdfColumnStyles || report.columnStyles || {}
     });
     return pdf;
   };
@@ -1039,6 +1039,13 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const headers = view === 'staff'
     ? ['ID', 'Staff', 'Category', 'Service Status', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
     : ['Event', 'Date', 'ID', 'Staff', 'Category', 'Service Status', 'Payment Status', 'Paid', 'Not Paid'];
+  const singleEventPaymentPdf = mode === 'event' && view === 'details';
+  const pdfHeaders = singleEventPaymentPdf
+    ? ['No', 'ID', 'Staff', 'Category', 'Status', 'Paid', 'Not Paid']
+    : headers;
+  const pdfRows = singleEventPaymentPdf
+    ? visibleDetails.map((record, index) => [index + 1, record.employeeId, record.staffName, record.category, record.status, currency(record.paidAmount), currency(record.dueAmount)])
+    : rows;
 
   const collected = detailRecords.reduce((sum, record) => sum + record.paidAmount, 0);
   const due = detailRecords.reduce((sum, record) => sum + record.dueAmount, 0);
@@ -1064,9 +1071,25 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     title,
     headers,
     rows,
+    pdfHeaders,
+    pdfRows,
     filename: `${title.replace(/\s+/g, '-').toLowerCase()}.pdf`,
     signatureFilename: `${title.replace(/\s+/g, '-').toLowerCase()}-signature-sheet.pdf`,
     signatureRows,
+    pdfOrientation: singleEventPaymentPdf || view === 'staff' ? 'portrait' : 'landscape',
+    pdfFontSize: singleEventPaymentPdf ? 8.8 : 8.2,
+    pdfHeadFontSize: singleEventPaymentPdf ? 9 : 8.5,
+    pdfColumnStyles: singleEventPaymentPdf
+      ? {
+        0: { cellWidth: 12, halign: 'center' },
+        1: { cellWidth: 14, halign: 'center' },
+        2: { cellWidth: 74 },
+        3: { cellWidth: 28 },
+        4: { cellWidth: 24 },
+        5: { cellWidth: 18, halign: 'right', overflow: 'visible' },
+        6: { cellWidth: 20, halign: 'right', overflow: 'visible' }
+      }
+      : undefined,
     orientation: view === 'staff' ? 'portrait' : 'landscape',
     columnStyles: view === 'staff'
       ? {
