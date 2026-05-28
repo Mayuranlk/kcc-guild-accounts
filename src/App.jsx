@@ -77,6 +77,11 @@ const STAFF_SERVICE_STATUSES = ['Active', 'Transferred', 'Temporary attachment t
 const currency = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const canManage = (user) => ['admin', 'treasurer'].includes(user?.role);
+const staffNumber = (value) => {
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
+};
+const sortByStaffNumber = (a, b) => staffNumber(a.employeeId) - staffNumber(b.employeeId) || String(a.staffName || a.name || '').localeCompare(String(b.staffName || b.name || ''));
 const staffCategory = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized.includes('non')) return 'Non Academic';
@@ -376,7 +381,9 @@ function StaffPage({ user, staff, reload }) {
   const emptyStaffForm = { employeeId: '', name: '', email: '', phone: '', category: 'Academic', serviceStatus: 'Active', statusDate: '' };
   const [form, setForm] = useState(emptyStaffForm);
   const authorized = user.role === 'admin';
-  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, staffCategory(s.category || s.section), s.serviceStatus].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const visible = staff
+    .filter((s) => [s.employeeId, s.name, s.email, staffCategory(s.category || s.section), s.serviceStatus].join(' ').toLowerCase().includes(search.toLowerCase()))
+    .sort(sortByStaffNumber);
 
   const open = (item = null) => {
     setEditing(item);
@@ -732,12 +739,21 @@ function ReportsPage({ staff, events, contributions, expenses }) {
   const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
   const createPdf = () => {
     if (!report.rows.length) return;
-    const pdf = new jsPDF();
+    const pdf = new jsPDF({ orientation: report.orientation || 'landscape', unit: 'mm', format: 'a4' });
     pdf.setFontSize(14);
     pdf.text(APP_NAME, 14, 14);
     pdf.setFontSize(10);
     pdf.text(report.title, 14, 22);
-    autoTable(pdf, { startY: 30, head: [report.headers], body: report.rows, styles: { fontSize: 8 } });
+    autoTable(pdf, {
+      startY: 30,
+      head: [report.headers],
+      body: report.rows,
+      theme: 'striped',
+      margin: { left: 10, right: 10 },
+      headStyles: { fillColor: [41, 128, 185], fontSize: 8, cellPadding: 2 },
+      styles: { fontSize: 7.5, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
+      columnStyles: report.columnStyles || {}
+    });
     return pdf;
   };
   const exportPdf = () => {
@@ -761,6 +777,54 @@ function ReportsPage({ staff, events, contributions, expenses }) {
     pdf.save(report.filename);
     window.open(`https://api.whatsapp.com/send?text=${shareText()}`, '_blank', 'noopener,noreferrer');
     alert('Your browser cannot attach a PDF directly to WhatsApp. The PDF has been downloaded; attach it manually in WhatsApp.');
+  };
+  const createSignaturePdf = () => {
+    if (!report.signatureRows?.length) return;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    pdf.setFontSize(14);
+    pdf.text(APP_NAME, 14, 14);
+    pdf.setFontSize(11);
+    pdf.text(`${report.title} - Signature Sheet`, 14, 22);
+    pdf.setFontSize(9);
+    pdf.text(`Generated: ${today()}`, 14, 28);
+    autoTable(pdf, {
+      startY: 34,
+      head: [['No', 'Name', 'Amount Paid', 'Signature']],
+      body: report.signatureRows,
+      theme: 'grid',
+      margin: { left: 12, right: 12 },
+      headStyles: { fillColor: [41, 128, 185], fontSize: 10 },
+      styles: { fontSize: 9, cellPadding: 3, minCellHeight: 10 },
+      columnStyles: {
+        0: { cellWidth: 14, halign: 'center' },
+        1: { cellWidth: 86 },
+        2: { cellWidth: 34, halign: 'right' },
+        3: { cellWidth: 50 }
+      }
+    });
+    return pdf;
+  };
+  const exportSignaturePdf = () => {
+    const pdf = createSignaturePdf();
+    if (pdf) pdf.save(report.signatureFilename);
+  };
+  const printSignaturePdf = () => {
+    const pdf = createSignaturePdf();
+    if (!pdf) return;
+    pdf.autoPrint();
+    window.open(pdf.output('bloburl'), '_blank', 'noopener,noreferrer');
+  };
+  const shareSignatureWhatsapp = async () => {
+    const pdf = createSignaturePdf();
+    if (!pdf) return;
+    const blob = pdf.output('blob');
+    const file = new File([blob], report.signatureFilename, { type: 'application/pdf' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ title: `${report.title} Signature Sheet`, text: 'Signature sheet attached.', files: [file] });
+      return;
+    }
+    pdf.save(report.signatureFilename);
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`${report.title} signature sheet PDF downloaded. Please attach the downloaded PDF.`)}`, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -799,8 +863,20 @@ function ReportsPage({ staff, events, contributions, expenses }) {
         <div className="row-actions">
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportPdf}><FileText size={16} />PDF</button>
+          <button className="secondary-btn" disabled={!report.rows.length} onClick={() => { const pdf = createPdf(); if (pdf) { pdf.autoPrint(); window.open(pdf.output('bloburl'), '_blank', 'noopener,noreferrer'); } }}><FileText size={16} />Print</button>
           <a className="secondary-btn" href={`mailto:?subject=${encodeURIComponent(report.title)}&body=${shareText()}`}><Mail size={16} />Email</a>
           <button className="secondary-btn" disabled={!report.rows.length} onClick={sharePdfWhatsapp}><Send size={16} />WhatsApp PDF</button>
+        </div>
+      </section>
+      <section className="panel signature-actions">
+        <div>
+          <h2>Manual Signature Sheet</h2>
+          <p className="muted">A4 sheet for file documentation: No, Name, Amount Paid, Signature.</p>
+        </div>
+        <div className="row-actions">
+          <button className="secondary-btn" disabled={!report.signatureRows?.length} onClick={exportSignaturePdf}><FileText size={16} />Signature PDF</button>
+          <button className="secondary-btn" disabled={!report.signatureRows?.length} onClick={printSignaturePdf}><FileText size={16} />Print Sheet</button>
+          <button className="secondary-btn" disabled={!report.signatureRows?.length} onClick={shareSignatureWhatsapp}><Send size={16} />WhatsApp Sheet</button>
         </div>
       </section>
       {report.stats && (
@@ -811,7 +887,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
           <Stat title="Paid / Unpaid" value={`${report.stats.paidCount} / ${report.stats.unpaidCount}`} icon={Users} tone="warn" />
         </div>
       )}
-      {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
+      {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td className={report.headers[j]?.includes('Paid') ? 'money-cell' : ''} key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
     </div>
   );
 }
@@ -826,7 +902,8 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     return { title: 'Guild Report', headers: [], rows: [], sheets: [], filename: 'guild-report.pdf' };
   }
 
-  const detailRecords = selectedEvents.flatMap((event) => staff.map((person) => {
+  const sortedStaff = [...staff].sort(sortByStaffNumber);
+  const detailRecords = selectedEvents.flatMap((event) => sortedStaff.map((person) => {
     const exempt = event.exemptIds?.includes(person.id);
     const contribution = contributions.find((item) => item.eventId === event.id && item.staffId === person.id);
     const paid = !exempt && !!contribution?.paid;
@@ -847,7 +924,7 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     };
   }));
 
-  const staffRecords = staff.map((person) => {
+  const staffRecords = sortedStaff.map((person) => {
     const records = detailRecords.filter((record) => record.employeeId === person.employeeId);
     return {
       employeeId: person.employeeId,
@@ -877,8 +954,8 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     return true;
   };
 
-  const visibleDetails = detailRecords.filter(filterDetails);
-  const visibleStaff = staffRecords.filter(filterStaff);
+  const visibleDetails = detailRecords.filter(filterDetails).sort((a, b) => a.eventDate.localeCompare(b.eventDate) || a.eventName.localeCompare(b.eventName) || sortByStaffNumber(a, b));
+  const visibleStaff = staffRecords.filter(filterStaff).sort(sortByStaffNumber);
   const rows = view === 'staff'
     ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.category, record.serviceStatus, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
     : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.category, record.serviceStatus, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
@@ -897,12 +974,46 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     : mode === 'events'
       ? `Selected Events Payment Report`
       : `Payment Report ${range.start} to ${range.end}`;
+  const signatureSource = mode === 'event'
+    ? visibleDetails.filter((record) => record.status !== 'Exempt')
+    : visibleStaff.filter((record) => record.serviceStatus === 'Active');
+  const signatureRows = signatureSource.map((record, index) => [
+    index + 1,
+    mode === 'event' || !record.eventName ? record.staffName : `${record.staffName} (${record.eventName})`,
+    currency(record.paidAmount || (mode === 'event' ? selectedEvents[0]?.amount : 0)),
+    ''
+  ]);
 
   return {
     title,
     headers,
     rows,
     filename: `${title.replace(/\s+/g, '-').toLowerCase()}.pdf`,
+    signatureFilename: `${title.replace(/\s+/g, '-').toLowerCase()}-signature-sheet.pdf`,
+    signatureRows,
+    orientation: view === 'staff' ? 'portrait' : 'landscape',
+    columnStyles: view === 'staff'
+      ? {
+        0: { cellWidth: 16 },
+        1: { cellWidth: 42 },
+        2: { cellWidth: 24 },
+        3: { cellWidth: 28 },
+        4: { cellWidth: 20, halign: 'center' },
+        5: { cellWidth: 22, halign: 'center' },
+        6: { cellWidth: 24, halign: 'right', overflow: 'visible' },
+        7: { cellWidth: 24, halign: 'right', overflow: 'visible' }
+      }
+      : {
+        0: { cellWidth: 22 },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 12, halign: 'center' },
+        3: { cellWidth: 56 },
+        4: { cellWidth: 24 },
+        5: { cellWidth: 28 },
+        6: { cellWidth: 25 },
+        7: { cellWidth: 22, halign: 'right', overflow: 'visible' },
+        8: { cellWidth: 22, halign: 'right', overflow: 'visible' }
+      },
     stats: { events: selectedEvents.length, collected, due, spent, paidCount, unpaidCount },
     summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nNot Paid: ${currency(due)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
     sheets: [
@@ -975,7 +1086,7 @@ export default function App() {
       getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc')))
     ]);
     const unpack = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
-    setData({ users: unpack(usersSnap), staff: unpack(staffSnap), events: unpack(eventsSnap), contributions: unpack(contributionsSnap), expenses: unpack(expensesSnap) });
+    setData({ users: unpack(usersSnap), staff: unpack(staffSnap).sort(sortByStaffNumber), events: unpack(eventsSnap), contributions: unpack(contributionsSnap), expenses: unpack(expensesSnap) });
   };
 
   useEffect(() => {

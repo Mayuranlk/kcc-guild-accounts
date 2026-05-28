@@ -213,6 +213,10 @@ table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th, td { padding: 13px 14px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
 th { background: #f8fafc; color: #475467; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 td { font-size: 14px; }
+.money-cell {
+  text-align: right;
+  white-space: nowrap;
+}
 .table-actions { display: flex; gap: 8px; }
 .table-actions button { border: 0; background: transparent; color: var(--primary); cursor: pointer; font-weight: 800; }
 
@@ -321,6 +325,19 @@ td { font-size: 14px; }
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
   align-items: end;
+}
+.signature-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.signature-actions h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.signature-actions p {
+  margin: 0;
 }
 .multi-select {
   border: 1px solid var(--line);
