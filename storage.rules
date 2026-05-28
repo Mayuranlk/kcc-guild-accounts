@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userProfile() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function approved() {
+      return signedIn() && userProfile().status == 'approved';
+    }
+
+    function treasurerOrAdmin() {
+      return approved() && userProfile().role in ['treasurer', 'admin'];
+    }
+
+    match /bills/{eventId}/{fileName} {
+      allow read: if approved();
+      allow write: if treasurerOrAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

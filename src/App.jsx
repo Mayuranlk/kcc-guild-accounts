@@ -80,11 +80,6 @@ export default function App() {
         setAuthChecking(false);
       });
     } else {
-      // Local simulation auth check
-      const current = localStorage.getItem('current_guild_user');
-      if (current) {
-        setCurrentUser(JSON.parse(current));
-      }
       setAuthChecking(false);
     }
 
@@ -94,8 +89,6 @@ export default function App() {
   const handleLogout = async () => {
     if (isFirebaseConfigured) {
       await signOut(auth);
-    } else {
-      localStorage.removeItem('current_guild_user');
     }
     setCurrentUser(null);
     setActiveTab('dashboard');
@@ -132,23 +125,6 @@ export default function App() {
         const expenses = [];
         expensesSnapshot.forEach(doc => expenses.push({ id: doc.id, ...doc.data() }));
         setExpensesList(expenses);
-
-      } else {
-        // Local simulation fetch
-        const staff = JSON.parse(localStorage.getItem('guild_staff') || '[]');
-        const events = JSON.parse(localStorage.getItem('guild_events') || '[]');
-        const contributions = JSON.parse(localStorage.getItem('guild_contributions') || '[]');
-        const expenses = JSON.parse(localStorage.getItem('guild_expenses') || '[]');
-
-        // Sort locally
-        staff.sort((a, b) => a.name.localeCompare(b.name));
-        events.sort((a, b) => new Date(b.date) - new Date(a.date));
-        expenses.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        setStaffList(staff);
-        setEventsList(events);
-        setContributionsList(contributions);
-        setExpensesList(expenses);
       }
     } catch (err) {
       console.error("Database sync failed:", err);
@@ -165,6 +141,28 @@ export default function App() {
         <div style={{ textAlign: 'center' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '8px' }}>Verifying Guild Credentials</h2>
           <p style={{ color: 'var(--text-muted)' }}>Connecting to Guild secure servers...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isFirebaseConfigured) {
+    return (
+      <div className="auth-wrapper">
+        <div className="auth-card">
+          <div className="auth-logo-section">
+            <div className="auth-logo">
+              <AlertTriangle size={28} />
+            </div>
+            <h1 className="auth-title">Firebase Setup Required</h1>
+            <p className="auth-subtitle">
+              Kilinochchi Central College - Guild Account Management needs live Firebase credentials before sign in, data entry, reports, or deployment.
+            </p>
+          </div>
+          <div className="alert-banner">
+            <AlertTriangle size={16} />
+            <span>Add the Vite Firebase environment variables in `.env` locally and in Vercel Project Settings.</span>
+          </div>
         </div>
       </div>
     );
@@ -288,15 +286,6 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="main-content">
-        {!isFirebaseConfigured && (
-          <div className="alert-banner" style={{ marginBottom: '24px' }}>
-            <AlertTriangle size={18} style={{ color: 'var(--warn)' }} />
-            <div>
-              <strong>Firebase Offline Notice:</strong> Currently running in local simulation mode. To connect your production database, update your config file or add environment variables to Vercel/local `.env`.
-            </div>
-          </div>
-        )}
-
         {/* Tab Routers */}
         {activeTab === 'dashboard' && (
           <Dashboard 
@@ -323,6 +312,7 @@ export default function App() {
             staffList={staffList} 
             eventsList={eventsList}
             contributionsList={contributionsList}
+            expensesList={expensesList}
             onRefreshEvents={fetchData}
           />
         )}

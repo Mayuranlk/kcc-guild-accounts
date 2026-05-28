@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
 import { 
   FileText, 
   Download, 
@@ -201,69 +202,122 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
   };
 
   // ----------------------------------------------------
-  // EXCEL EXPORT (CSV FORMAT GENERATION)
+  // EXCEL EXPORT
   // ----------------------------------------------------
   const handleExportExcel = () => {
-    let csvContent = "";
+    const workbook = XLSX.utils.book_new();
     
     if (activeTab === 'single' && singleEventObj) {
-      csvContent += `"Kilinochchi Central College - School Guild Account Management"\n`;
-      csvContent += `"Event Report: ${singleEventObj.name}"\n`;
-      csvContent += `"Event Date: ${singleEventObj.date}"\n\n`;
-      
-      csvContent += `"Financial Metrics"\n`;
-      csvContent += `"Total Collected",Rs. ${singleCollected}\n`;
-      csvContent += `"Total Spent",Rs. ${singleSpent}\n`;
-      csvContent += `"Net Balance",Rs. ${singleNet}\n\n`;
-      
-      csvContent += `"Paid Staff Members"\n`;
-      csvContent += `"Employee ID","Name","Amount Contributed","Payment Date"\n`;
-      singlePaidStaff.forEach(s => {
-        csvContent += `"${s.employeeId}","${s.name}","Rs. ${s.amount}","${s.date}"\n`;
-      });
-      csvContent += `\n`;
-      
-      csvContent += `"Unpaid Staff Members"\n`;
-      csvContent += `"Employee ID","Name","Target Amount Due"\n`;
-      singleUnpaidStaff.forEach(s => {
-        csvContent += `"${s.employeeId}","${s.name}","Rs. ${singleEventObj.targetAmount}"\n`;
-      });
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['Kilinochchi Central College - Guild Account Management'],
+        [`Event Report: ${singleEventObj.name}`],
+        [`Event Date: ${singleEventObj.date}`],
+        [],
+        ['Metric', 'Amount'],
+        ['Total Collected', singleCollected],
+        ['Total Spent', singleSpent],
+        ['Net Balance', singleNet],
+        ['Paid Staff', singlePaidStaff.length],
+        ['Unpaid Staff', singleUnpaidStaff.length]
+      ]);
+
+      const paidSheet = XLSX.utils.json_to_sheet(singlePaidStaff.map(s => ({
+        'Employee ID': s.employeeId,
+        Name: s.name,
+        Department: s.section,
+        'Amount Contributed': s.amount,
+        'Payment Date': s.date
+      })));
+
+      const unpaidSheet = XLSX.utils.json_to_sheet(singleUnpaidStaff.map(s => ({
+        'Employee ID': s.employeeId,
+        Name: s.name,
+        Department: s.section,
+        'Amount Due': singleEventObj.targetAmount
+      })));
+
+      const expenseSheet = XLSX.utils.json_to_sheet(singleEventExpenses.map(e => ({
+        Event: e.eventName,
+        Category: e.category,
+        Description: e.description,
+        Date: e.date,
+        Amount: e.amount,
+        'Bill URL': e.imageUrl || ''
+      })));
+
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+      XLSX.utils.book_append_sheet(workbook, paidSheet, 'Paid Staff');
+      XLSX.utils.book_append_sheet(workbook, unpaidSheet, 'Unpaid Staff');
+      XLSX.utils.book_append_sheet(workbook, expenseSheet, 'Expenses');
     } else if (activeTab === 'range' && eventsInRange.length > 0) {
-      csvContent += `"Kilinochchi Central College - School Guild Account Management"\n`;
-      csvContent += `"Custom Range Financial Report: ${startDate} to ${endDate}"\n\n`;
-      
-      csvContent += `"Financial Summary"\n`;
-      csvContent += `"Total Collected",Rs. ${rangeTotalCollected}\n`;
-      csvContent += `"Total Spent",Rs. ${rangeTotalSpent}\n`;
-      csvContent += `"Net Balance",Rs. ${rangeNetBalance}\n\n`;
-      
-      // Matrix Headers
-      const eventHeaders = eventsInRange.map(e => `"${e.name} (Rs. ${e.targetAmount})"`).join(',');
-      csvContent += `"Employee ID","Staff Name","Department",${eventHeaders},"Total Paid","Total Outstanding"\n`;
-      
-      staffRangeSummary.forEach(row => {
-        const eventStatuses = eventsInRange.map(event => {
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['Kilinochchi Central College - Guild Account Management'],
+        [`Custom Range Financial Report: ${startDate} to ${endDate}`],
+        [],
+        ['Metric', 'Amount'],
+        ['Events Covered', eventsInRange.length],
+        ['Total Collected', rangeTotalCollected],
+        ['Total Spent', rangeTotalSpent],
+        ['Net Balance', rangeNetBalance]
+      ]);
+
+      const matrixRows = staffRangeSummary.map(row => {
+        const item = {
+          'Employee ID': row.employeeId,
+          'Staff Name': row.name,
+          Department: row.department
+        };
+
+        eventsInRange.forEach(event => {
           const detail = row.eventSummary[event.id];
-          if (detail.status === 'exempt') return `"Exempt"`;
-          if (detail.status === 'paid') return `"Paid (Rs. ${detail.amount})"`;
-          return `"Unpaid"`;
-        }).join(',');
-        
-        csvContent += `"${row.employeeId}","${row.name}","${row.department}",${eventStatuses},"Rs. ${row.totalPaid}","Rs. ${row.totalDue}"\n`;
+          if (detail.status === 'exempt') item[event.name] = 'Exempt';
+          else if (detail.status === 'paid') item[event.name] = `Paid - Rs. ${detail.amount}`;
+          else item[event.name] = `Unpaid - Rs. ${event.targetAmount}`;
+        });
+
+        item['Total Paid'] = row.totalPaid;
+        item['Total Outstanding'] = row.totalDue;
+        return item;
       });
+
+      const matrixSheet = XLSX.utils.json_to_sheet(matrixRows);
+      const outstandingSheet = XLSX.utils.json_to_sheet(
+        staffRangeSummary
+          .filter(s => s.totalDue > 0)
+          .sort((a, b) => b.totalDue - a.totalDue)
+          .map(s => ({
+            'Employee ID': s.employeeId,
+            'Staff Name': s.name,
+            Department: s.department,
+            'Total Paid': s.totalPaid,
+            'Total Outstanding': s.totalDue
+          }))
+      );
+
+      const expenseSheet = XLSX.utils.json_to_sheet(rangeExpenses.map(e => ({
+        Event: e.eventName,
+        Category: e.category,
+        Description: e.description,
+        Date: e.date,
+        Amount: e.amount,
+        'Bill URL': e.imageUrl || ''
+      })));
+
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+      XLSX.utils.book_append_sheet(workbook, matrixSheet, 'Event Matrix');
+      XLSX.utils.book_append_sheet(workbook, outstandingSheet, 'Outstanding');
+      XLSX.utils.book_append_sheet(workbook, expenseSheet, 'Expenses');
     } else {
       alert("No report data available to export.");
       return;
     }
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", activeTab === 'single' ? `event_report_${singleEventObj?.name.replace(/\s+/g, '_')}.csv` : `guild_report_${startDate}_to_${endDate}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+    XLSX.writeFile(
+      workbook,
+      activeTab === 'single'
+        ? `event_report_${singleEventObj?.name.replace(/\s+/g, '_')}.xlsx`
+        : `guild_report_${startDate}_to_${endDate}.xlsx`
+    );
   };
 
   // ----------------------------------------------------
@@ -483,7 +537,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
             {singleEventId && (
               <div className="report-actions" style={{ marginBottom: 0 }}>
                 <button onClick={handleExportExcel} className="btn btn-secondary">
-                  <Download size={14} /> Excel (CSV)
+                  <Download size={14} /> Excel
                 </button>
                 <button onClick={handleExportPDF} className="btn btn-secondary">
                   <FileText size={14} /> PDF Report
@@ -654,7 +708,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
             {eventsInRange.length > 0 && (
               <div className="report-actions" style={{ marginBottom: 0 }}>
                 <button onClick={handleExportExcel} className="btn btn-secondary">
-                  <Download size={14} /> Excel (CSV)
+                  <Download size={14} /> Excel
                 </button>
                 <button onClick={handleExportPDF} className="btn btn-secondary">
                   <FileText size={14} /> PDF Report

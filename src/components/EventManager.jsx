@@ -14,15 +14,14 @@ import {
   Info 
 } from 'lucide-react';
 import { 
-  isFirebaseConfigured, 
   db, 
-  collection, 
   setDoc, 
   doc, 
-  deleteDoc 
+  deleteDoc,
+  writeBatch
 } from '../firebase';
 
-export default function EventManager({ currentUser, staffList, eventsList, contributionsList, onRefreshEvents }) {
+export default function EventManager({ currentUser, staffList, eventsList, contributionsList, expensesList, onRefreshEvents }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,46 +58,25 @@ export default function EventManager({ currentUser, staffList, eventsList, contr
     };
 
     try {
-      if (isFirebaseConfigured) {
-        await setDoc(doc(db, 'events', eventId), eventData);
-        
-        // Initialize default contribution records for this event
-        for (const staff of staffList) {
-          const isExempt = exemptStaffIds.includes(staff.id);
-          const contributionId = `${eventId}_${staff.id}`;
-          const contributionData = {
-            id: contributionId,
-            eventId: eventId,
-            staffId: staff.id,
-            staffName: staff.name,
-            paid: false,
-            amount: isExempt ? 0 : 0, // 0 until marked paid
-            isExempt: isExempt,
-            updatedAt: new Date().toISOString()
-          };
-          await setDoc(doc(db, 'contributions', contributionId), contributionData);
-        }
-      } else {
-        const localEvents = JSON.parse(localStorage.getItem('guild_events') || '[]');
-        localEvents.push(eventData);
-        localStorage.setItem('guild_events', JSON.stringify(localEvents));
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'events', eventId), eventData);
 
-        const localContributions = JSON.parse(localStorage.getItem('guild_contributions') || '[]');
-        staffList.forEach(staff => {
-          const isExempt = exemptStaffIds.includes(staff.id);
-          localContributions.push({
-            id: `${eventId}_${staff.id}`,
-            eventId: eventId,
-            staffId: staff.id,
-            staffName: staff.name,
-            paid: false,
-            amount: 0,
-            isExempt: isExempt,
-            updatedAt: new Date().toISOString()
-          });
+      staffList.forEach(staff => {
+        const isExempt = exemptStaffIds.includes(staff.id);
+        const contributionId = `${eventId}_${staff.id}`;
+        batch.set(doc(db, 'contributions', contributionId), {
+          id: contributionId,
+          eventId: eventId,
+          staffId: staff.id,
+          staffName: staff.name,
+          paid: false,
+          amount: 0,
+          isExempt: isExempt,
+          updatedAt: new Date().toISOString()
         });
-        localStorage.setItem('guild_contributions', JSON.stringify(localContributions));
-      }
+      });
+
+      await batch.commit();
 
       resetForm();
       setShowAddModal(false);
@@ -114,29 +92,18 @@ export default function EventManager({ currentUser, staffList, eventsList, contr
     if (!window.confirm("Are you sure you want to delete this event? This will also wipe all contributions and expenses linked to this event!")) return;
 
     try {
-      if (isFirebaseConfigured) {
-        await deleteDoc(doc(db, 'events', eventId));
-        
-        // Clear related contributions
-        const eventContribs = contributionsList.filter(c => c.eventId === eventId);
-        for (const c of eventContribs) {
-          await deleteDoc(doc(db, 'contributions', c.id));
-        }
-        
-        // Note: Expenses will be cleared inside ExpenseManager or standard database cleanup
-      } else {
-        const localEvents = JSON.parse(localStorage.getItem('guild_events') || '[]');
-        const updatedEvents = localEvents.filter(e => e.id !== eventId);
-        localStorage.setItem('guild_events', JSON.stringify(updatedEvents));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'events', eventId));
 
-        const localContributions = JSON.parse(localStorage.getItem('guild_contributions') || '[]');
-        const updatedContribs = localContributions.filter(c => c.eventId !== eventId);
-        localStorage.setItem('guild_contributions', JSON.stringify(updatedContribs));
-        
-        const localExpenses = JSON.parse(localStorage.getItem('guild_expenses') || '[]');
-        const updatedExpenses = localExpenses.filter(e => e.eventId !== eventId);
-        localStorage.setItem('guild_expenses', JSON.stringify(updatedExpenses));
-      }
+      contributionsList
+        .filter(c => c.eventId === eventId)
+        .forEach(c => batch.delete(doc(db, 'contributions', c.id)));
+
+      expensesList
+        .filter(e => e.eventId === eventId)
+        .forEach(e => batch.delete(doc(db, 'expenses', e.id)));
+
+      await batch.commit();
       onRefreshEvents();
     } catch (err) {
       console.error("Error deleting event:", err);
@@ -159,16 +126,7 @@ export default function EventManager({ currentUser, staffList, eventsList, contr
     };
 
     try {
-      if (isFirebaseConfigured) {
-        await setDoc(doc(db, 'contributions', contribution.id), updatedContribution);
-      } else {
-        const localContributions = JSON.parse(localStorage.getItem('guild_contributions') || '[]');
-        const index = localContributions.findIndex(c => c.id === contribution.id);
-        if (index !== -1) {
-          localContributions[index] = updatedContribution;
-          localStorage.setItem('guild_contributions', JSON.stringify(localContributions));
-        }
-      }
+      await setDoc(doc(db, 'contributions', contribution.id), updatedContribution);
       onRefreshEvents();
     } catch (err) {
       console.error("Error updating contribution:", err);
@@ -188,16 +146,7 @@ export default function EventManager({ currentUser, staffList, eventsList, contr
     };
 
     try {
-      if (isFirebaseConfigured) {
-        await setDoc(doc(db, 'contributions', contribution.id), updatedContribution);
-      } else {
-        const localContributions = JSON.parse(localStorage.getItem('guild_contributions') || '[]');
-        const index = localContributions.findIndex(c => c.id === contribution.id);
-        if (index !== -1) {
-          localContributions[index] = updatedContribution;
-          localStorage.setItem('guild_contributions', JSON.stringify(localContributions));
-        }
-      }
+      await setDoc(doc(db, 'contributions', contribution.id), updatedContribution);
       onRefreshEvents();
     } catch (err) {
       console.error("Error updating contribution amount:", err);

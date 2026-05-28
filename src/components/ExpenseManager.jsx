@@ -11,10 +11,8 @@ import {
   Maximize2 
 } from 'lucide-react';
 import { 
-  isFirebaseConfigured, 
   db, 
   storage, 
-  collection, 
   setDoc, 
   doc, 
   deleteDoc, 
@@ -34,7 +32,7 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState('');
   const [description, setDescription] = useState('');
-  const [billImage, setBillImage] = useState(null); // base64 string or file
+  const [billImage, setBillImage] = useState(null);
   const [billFileName, setBillFileName] = useState('');
   const [uploading, setUploading] = useState(false);
 
@@ -54,9 +52,8 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
     const file = e.target.files[0];
     if (!file) return;
 
-    // Check size < 800KB for Firestore Base64 document size safety
-    if (file.size > 800 * 1024) {
-      alert("Image is too large for database storage. Please select or crop a photo smaller than 800KB.");
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image is too large. Please select or crop a photo smaller than 5MB.");
       return;
     }
 
@@ -78,20 +75,9 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
 
     try {
       if (billImage) {
-        if (isFirebaseConfigured && storage) {
-          try {
-            // Upload to Firebase Storage
-            const storageRef = ref(storage, `bills/${eventId}/${expenseId}_${billFileName}`);
-            const snapshot = await uploadString(storageRef, billImage, 'data_url');
-            finalImageUrl = await getDownloadURL(snapshot.ref);
-          } catch (storageError) {
-            console.warn("Firebase Storage failed or not activated. Storing bill photo as Base64 in Firestore directly:", storageError);
-            finalImageUrl = billImage; // Fallback to base64 in database
-          }
-        } else {
-          // Fallback to local storage or storing base64 inside Firestore
-          finalImageUrl = billImage; // Base64 is perfectly viewable in src tags
-        }
+        const storageRef = ref(storage, `bills/${eventId}/${expenseId}_${billFileName}`);
+        const snapshot = await uploadString(storageRef, billImage, 'data_url');
+        finalImageUrl = await getDownloadURL(snapshot.ref);
       }
 
       const expenseData = {
@@ -106,13 +92,7 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
         createdAt: new Date().toISOString()
       };
 
-      if (isFirebaseConfigured) {
-        await setDoc(doc(db, 'expenses', expenseId), expenseData);
-      } else {
-        const localExpenses = JSON.parse(localStorage.getItem('guild_expenses') || '[]');
-        localExpenses.push(expenseData);
-        localStorage.setItem('guild_expenses', JSON.stringify(localExpenses));
-      }
+      await setDoc(doc(db, 'expenses', expenseId), expenseData);
 
       resetForm();
       setShowAddModal(false);
@@ -130,14 +110,7 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
     if (!window.confirm("Are you sure you want to delete this expense record?")) return;
 
     try {
-      if (isFirebaseConfigured) {
-        await deleteDoc(doc(db, 'expenses', expense.id));
-        // We could also delete the storage file if needed, but not strictly necessary for demo
-      } else {
-        const localExpenses = JSON.parse(localStorage.getItem('guild_expenses') || '[]');
-        const updated = localExpenses.filter(e => e.id !== expense.id);
-        localStorage.setItem('guild_expenses', JSON.stringify(updated));
-      }
+      await deleteDoc(doc(db, 'expenses', expense.id));
       onRefreshExpenses();
     } catch (err) {
       console.error("Error deleting expense:", err);

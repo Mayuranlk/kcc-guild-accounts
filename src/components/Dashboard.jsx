@@ -11,7 +11,6 @@ import {
   Unlock 
 } from 'lucide-react';
 import { 
-  isFirebaseConfigured, 
   db, 
   collection, 
   getDocs, 
@@ -28,17 +27,12 @@ export default function Dashboard({ currentUser, staffList, eventsList, expenses
     if (currentUser.role !== 'admin') return;
     setLoadingUsers(true);
     try {
-      if (isFirebaseConfigured) {
-        const usersSnapshot = await getDocs(collection(db, 'users'));
-        const users = [];
-        usersSnapshot.forEach(doc => {
-          users.push(doc.data());
-        });
-        setGuildUsers(users);
-      } else {
-        const users = JSON.parse(localStorage.getItem('guild_users') || '[]');
-        setGuildUsers(users);
-      }
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const users = [];
+      usersSnapshot.forEach(doc => {
+        users.push(doc.data());
+      });
+      setGuildUsers(users);
     } catch (err) {
       console.error("Error loading registered users:", err);
     } finally {
@@ -52,20 +46,10 @@ export default function Dashboard({ currentUser, staffList, eventsList, expenses
 
   const handleUpdateUserStatus = async (uid, newStatus, newRole) => {
     try {
-      if (isFirebaseConfigured) {
-        await updateDoc(doc(db, 'users', uid), {
-          status: newStatus,
-          role: newRole
-        });
-      } else {
-        const localUsers = JSON.parse(localStorage.getItem('guild_users') || '[]');
-        const index = localUsers.findIndex(u => u.uid === uid);
-        if (index !== -1) {
-          localUsers[index].status = newStatus;
-          localUsers[index].role = newRole;
-          localStorage.setItem('guild_users', JSON.stringify(localUsers));
-        }
-      }
+      await updateDoc(doc(db, 'users', uid), {
+        status: newStatus,
+        role: newRole
+      });
       loadGuildUsers();
       if (onUpdateUsers) onUpdateUsers();
     } catch (err) {

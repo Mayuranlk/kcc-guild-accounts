@@ -3,7 +3,6 @@ import {
   auth, 
   db, 
   googleProvider, 
-  isFirebaseConfigured,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
@@ -94,63 +93,6 @@ export default function Login({ onAuthSuccess }) {
     }
   };
 
-  // Mock fallbacks for offline demo testing
-  const handleLocalSignUp = (email, password, displayName) => {
-    const localUsers = JSON.parse(localStorage.getItem('guild_users') || '[]');
-    const userExists = localUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (userExists) {
-      throw new Error("Email already registered in local database.");
-    }
-    
-    const isFirstUser = localUsers.length === 0;
-    const mockUser = {
-      uid: 'mock_' + Math.random().toString(36).substr(2, 9),
-      email: email,
-      displayName: displayName || email.split('@')[0],
-      role: isFirstUser ? 'admin' : 'regular',
-      status: isFirstUser ? 'approved' : 'pending',
-      createdAt: new Date().toISOString()
-    };
-    
-    localUsers.push(mockUser);
-    localStorage.setItem('guild_users', JSON.stringify(localUsers));
-    localStorage.setItem('current_guild_user', JSON.stringify(mockUser));
-    return mockUser;
-  };
-
-  const handleLocalSignIn = (email, password) => {
-    const localUsers = JSON.parse(localStorage.getItem('guild_users') || '[]');
-    const user = localUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      throw new Error("User not found in local database.");
-    }
-    localStorage.setItem('current_guild_user', JSON.stringify(user));
-    return user;
-  };
-
-  const handleLocalGoogleSignIn = () => {
-    const localUsers = JSON.parse(localStorage.getItem('guild_users') || '[]');
-    const isFirstUser = localUsers.length === 0;
-    const mockUser = {
-      uid: 'mock_google_' + Math.random().toString(36).substr(2, 9),
-      email: 'google.user@example.com',
-      displayName: 'Google User',
-      role: isFirstUser ? 'admin' : 'regular',
-      status: isFirstUser ? 'approved' : 'pending',
-      createdAt: new Date().toISOString()
-    };
-    
-    const exists = localUsers.find(u => u.email === mockUser.email);
-    if (!exists) {
-      localUsers.push(mockUser);
-      localStorage.setItem('guild_users', JSON.stringify(localUsers));
-    }
-    
-    const activeUser = exists || mockUser;
-    localStorage.setItem('current_guild_user', JSON.stringify(activeUser));
-    return activeUser;
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -161,20 +103,10 @@ export default function Login({ onAuthSuccess }) {
         if (!displayName.trim()) {
           throw new Error('Please enter your full name');
         }
-        let user;
-        if (isFirebaseConfigured) {
-          user = await handleFirebaseSignUp(email, password, displayName);
-        } else {
-          user = handleLocalSignUp(email, password, displayName);
-        }
+        const user = await handleFirebaseSignUp(email, password, displayName);
         onAuthSuccess(user);
       } else {
-        let user;
-        if (isFirebaseConfigured) {
-          user = await handleFirebaseSignIn(email, password);
-        } else {
-          user = handleLocalSignIn(email, password);
-        }
+        const user = await handleFirebaseSignIn(email, password);
         onAuthSuccess(user);
       }
     } catch (err) {
@@ -189,12 +121,7 @@ export default function Login({ onAuthSuccess }) {
     setError('');
     setLoading(true);
     try {
-      let user;
-      if (isFirebaseConfigured) {
-        user = await handleFirebaseGoogleSignIn();
-      } else {
-        user = handleLocalGoogleSignIn();
-      }
+      const user = await handleFirebaseGoogleSignIn();
       onAuthSuccess(user);
     } catch (err) {
       console.error(err);
@@ -214,13 +141,6 @@ export default function Login({ onAuthSuccess }) {
           <h1 className="auth-title">Kilinochchi Central College</h1>
           <p className="auth-subtitle">Guild Account Management</p>
         </div>
-
-        {!isFirebaseConfigured && (
-          <div className="alert-banner">
-            <AlertCircle size={16} />
-            <span>Local Simulation Mode: Firebase credentials missing. Registering users locally.</span>
-          </div>
-        )}
 
         {error && (
           <div className="alert-banner" style={{ backgroundColor: 'var(--danger-bg)', borderColor: 'var(--danger-border)', color: 'var(--danger)' }}>
@@ -266,7 +186,7 @@ export default function Login({ onAuthSuccess }) {
               <input
                 type="password"
                 required
-                placeholder="••••••••"
+                placeholder="Minimum 6 characters"
                 className="form-control"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

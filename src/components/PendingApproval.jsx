@@ -1,27 +1,18 @@
 import React from 'react';
 import { LogOut, RefreshCw, Clock } from 'lucide-react';
-import { auth, isFirebaseConfigured, doc, getDoc, db } from '../firebase';
+import { doc, getDoc, db } from '../firebase';
 
 export default function PendingApproval({ user, onLogout, onStatusRefresh }) {
   
   const handleRefresh = async () => {
-    if (isFirebaseConfigured) {
-      try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists()) {
-          const updatedUser = userDoc.data();
-          onStatusRefresh(updatedUser);
-        }
-      } catch (err) {
-        console.error("Error refreshing status:", err);
-      }
-    } else {
-      // Local simulation refresh
-      const localUsers = JSON.parse(localStorage.getItem('guild_users') || '[]');
-      const updatedUser = localUsers.find(u => u.uid === user.uid);
-      if (updatedUser) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        const updatedUser = userDoc.data();
         onStatusRefresh(updatedUser);
       }
+    } catch (err) {
+      console.error("Error refreshing status:", err);
     }
   };
 

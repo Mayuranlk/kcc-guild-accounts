@@ -42,8 +42,14 @@ const firebaseConfig = {
 
 // Check if credentials are provided
 const isFirebaseConfigured = !!(
-  firebaseConfig.apiKey && 
-  firebaseConfig.apiKey !== 'YOUR_FIREBASE_API_KEY'
+  firebaseConfig.apiKey &&
+  firebaseConfig.authDomain &&
+  firebaseConfig.projectId &&
+  firebaseConfig.storageBucket &&
+  firebaseConfig.messagingSenderId &&
+  firebaseConfig.appId &&
+  !firebaseConfig.apiKey.includes('your_') &&
+  !firebaseConfig.apiKey.includes('YOUR_')
 );
 
 let app;
@@ -60,7 +66,7 @@ if (isFirebaseConfigured) {
     storage = getStorage(app);
     googleProvider = new GoogleAuthProvider();
   } catch (error) {
-    console.error("Firebase initialization failed, falling back to local simulation mode:", error);
+    console.error("Firebase initialization failed:", error);
   }
 }
 

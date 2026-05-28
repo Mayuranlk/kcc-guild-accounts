@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
 import { 
   UserPlus, 
   Upload, 
@@ -12,7 +13,6 @@ import {
   AlertCircle 
 } from 'lucide-react';
 import { 
-  isFirebaseConfigured, 
   db, 
   collection, 
   setDoc, 
@@ -61,18 +61,7 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
     };
 
     try {
-      if (isFirebaseConfigured) {
-        await setDoc(doc(db, 'staff', staffData.id), staffData);
-      } else {
-        const localStaff = JSON.parse(localStorage.getItem('guild_staff') || '[]');
-        const index = localStaff.findIndex(s => s.id === staffData.id);
-        if (index !== -1) {
-          localStaff[index] = staffData;
-        } else {
-          localStaff.push(staffData);
-        }
-        localStorage.setItem('guild_staff', JSON.stringify(localStaff));
-      }
+      await setDoc(doc(db, 'staff', staffData.id), staffData);
 
       resetForm();
       setShowAddModal(false);
@@ -98,13 +87,7 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
     if (!window.confirm("Are you sure you want to remove this staff member? All their historical contribution mappings will remain but they won't be prompt for future events.")) return;
 
     try {
-      if (isFirebaseConfigured) {
-        await deleteDoc(doc(db, 'staff', staffId));
-      } else {
-        const localStaff = JSON.parse(localStorage.getItem('guild_staff') || '[]');
-        const updated = localStaff.filter(s => s.id !== staffId);
-        localStorage.setItem('guild_staff', JSON.stringify(updated));
-      }
+      await deleteDoc(doc(db, 'staff', staffId));
       onRefreshStaff();
     } catch (err) {
       console.error("Error deleting staff:", err);
@@ -141,6 +124,43 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
     return arr;
   };
 
+  const normalizeHeader = (value) => String(value || '').trim().toLowerCase();
+
+  const mapStaffRows = (rows) => {
+    if (rows.length <= 1) {
+      throw new Error("File is empty or only contains headers.");
+    }
+
+    const headers = rows[0].map(normalizeHeader);
+    const required = ['employee id', 'name', 'email', 'phone', 'section'];
+    const headerIndexes = {};
+
+    required.forEach(req => {
+      const idx = headers.findIndex(h => h.includes(req));
+      if (idx !== -1) headerIndexes[req] = idx;
+    });
+
+    if (Object.keys(headerIndexes).length < 5) {
+      throw new Error("Invalid headers. Use columns for: Employee ID, Name, Email, Phone, Section");
+    }
+
+    return rows.slice(1)
+      .map(cols => {
+        const empId = String(cols[headerIndexes['employee id']] || '').trim();
+        if (!empId) return null;
+        return {
+          id: empId,
+          employeeId: empId,
+          name: String(cols[headerIndexes['name']] || '').trim(),
+          email: String(cols[headerIndexes['email']] || '').trim(),
+          phone: String(cols[headerIndexes['phone']] || '').trim(),
+          section: String(cols[headerIndexes['section']] || '').trim(),
+          updatedAt: new Date().toISOString()
+        };
+      })
+      .filter(Boolean);
+  };
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -150,43 +170,29 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const text = evt.target.result;
-      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-      if (lines.length <= 1) {
-        setUploadError("CSV file is empty or only contains headers.");
-        return;
-      }
-
-      const headers = parseCSVLine(lines[0]);
-      // Verify headers
-      const required = ['employee id', 'name', 'email', 'phone', 'section'];
-      const headerIndexes = {};
-      required.forEach(req => {
-        const idx = headers.findIndex(h => h.toLowerCase().includes(req));
-        if (idx !== -1) headerIndexes[req] = idx;
-      });
-
-      if (Object.keys(headerIndexes).length < 5) {
-        setUploadError("Invalid headers. Make sure you have columns for: Employee ID, Name, Email, Phone, Section");
-        return;
-      }
-
-      const previewRows = [];
-      for (let i = 1; i < Math.min(lines.length, 6); i++) {
-        const cols = parseCSVLine(lines[i]);
-        if (cols.length >= 5) {
-          previewRows.push({
-            employeeId: cols[headerIndexes['employee id']] || '',
-            name: cols[headerIndexes['name']] || '',
-            email: cols[headerIndexes['email']] || '',
-            phone: cols[headerIndexes['phone']] || '',
-            section: cols[headerIndexes['section']] || ''
-          });
+      try {
+        const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+        let rows;
+        if (isExcel) {
+          const workbook = XLSX.read(evt.target.result, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+        } else {
+          const text = evt.target.result;
+          rows = text.split(/\r?\n/).filter(line => line.trim() !== '').map(parseCSVLine);
         }
+
+        setUploadPreview(mapStaffRows(rows).slice(0, 5));
+      } catch (err) {
+        setUploadError(err.message);
       }
-      setUploadPreview(previewRows);
     };
-    reader.readAsText(file);
+
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
   };
 
   const handleBulkUpload = async () => {
@@ -195,54 +201,23 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
     try {
       const reader = new FileReader();
       reader.onload = async (evt) => {
-        const text = evt.target.result;
-        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-        
-        const headers = parseCSVLine(lines[0]);
-        const required = ['employee id', 'name', 'email', 'phone', 'section'];
-        const headerIndexes = {};
-        required.forEach(req => {
-          headerIndexes[req] = headers.findIndex(h => h.toLowerCase().includes(req));
-        });
-
-        const parsedStaff = [];
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseCSVLine(lines[i]);
-          if (cols.length >= 5) {
-            const empId = cols[headerIndexes['employee id']];
-            if (empId) {
-              parsedStaff.push({
-                id: empId.trim(),
-                employeeId: empId.trim(),
-                name: (cols[headerIndexes['name']] || '').trim(),
-                email: (cols[headerIndexes['email']] || '').trim(),
-                phone: (cols[headerIndexes['phone']] || '').trim(),
-                section: (cols[headerIndexes['section']] || '').trim(),
-                updatedAt: new Date().toISOString()
-              });
-            }
-          }
-        }
-
-        if (isFirebaseConfigured) {
-          const batch = writeBatch(db);
-          parsedStaff.forEach(staff => {
-            const ref = doc(db, 'staff', staff.id);
-            batch.set(ref, staff);
-          });
-          await batch.commit();
+        let rows;
+        if (/\.(xlsx|xls)$/i.test(csvFile.name)) {
+          const workbook = XLSX.read(evt.target.result, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
         } else {
-          const localStaff = JSON.parse(localStorage.getItem('guild_staff') || '[]');
-          parsedStaff.forEach(staff => {
-            const index = localStaff.findIndex(s => s.id === staff.id);
-            if (index !== -1) {
-              localStaff[index] = staff;
-            } else {
-              localStaff.push(staff);
-            }
-          });
-          localStorage.setItem('guild_staff', JSON.stringify(localStaff));
+          const text = evt.target.result;
+          rows = text.split(/\r?\n/).filter(line => line.trim() !== '').map(parseCSVLine);
         }
+
+        const parsedStaff = mapStaffRows(rows);
+        const batch = writeBatch(db);
+        parsedStaff.forEach(staff => {
+          const ref = doc(db, 'staff', staff.id);
+          batch.set(ref, staff);
+        });
+        await batch.commit();
 
         setUploadSuccessCount(parsedStaff.length);
         setTimeout(() => {
@@ -253,7 +228,11 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
           onRefreshStaff();
         }, 1500);
       };
-      reader.readAsText(csvFile);
+      if (/\.(xlsx|xls)$/i.test(csvFile.name)) {
+        reader.readAsArrayBuffer(csvFile);
+      } else {
+        reader.readAsText(csvFile);
+      }
     } catch (err) {
       console.error(err);
       setUploadError("Bulk upload failed during batch insertion.");
@@ -261,16 +240,15 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
   };
 
   const downloadCSVTemplate = () => {
-    const headers = 'Employee ID,Name,Email,Phone,Section\n';
-    const sample = 'EMP101,Mr. A. Perera,perera@kcc.edu,0771234567,Science Department\nEMP102,Mrs. S. Raghu,raghu@kcc.edu,0777654321,Language Section\n';
-    const blob = new Blob([headers + sample], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "kcc_staff_template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const rows = [
+      ['Employee ID', 'Name', 'Email', 'Phone', 'Section'],
+      ['EMP101', 'Mr. A. Perera', 'perera@kcc.edu', '0771234567', 'Science Department'],
+      ['EMP102', 'Mrs. S. Raghu', 'raghu@kcc.edu', '0777654321', 'Language Section']
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Staff Template');
+    XLSX.writeFile(workbook, 'kcc_staff_template.xlsx');
   };
 
   const exportStaffDetails = () => {
@@ -278,16 +256,17 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
       alert("No staff details to export.");
       return;
     }
-    const headers = 'Employee ID,Name,Email,Phone,Section\n';
-    const rows = staffList.map(s => `"${s.employeeId}","${s.name}","${s.email}","${s.phone}","${s.section}"`).join('\n');
-    const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "kcc_guild_staff_details.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const rows = staffList.map(s => ({
+      'Employee ID': s.employeeId,
+      Name: s.name,
+      Email: s.email,
+      Phone: s.phone,
+      Section: s.section
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Staff Details');
+    XLSX.writeFile(workbook, 'kcc_guild_staff_details.xlsx');
   };
 
   const filteredStaff = staffList.filter(staff => 
@@ -311,7 +290,7 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
             </button>
             <button onClick={() => setShowBulkModal(true)} className="btn btn-secondary">
               <Upload size={16} />
-              Bulk Upload (CSV)
+              Bulk Upload
             </button>
             <button onClick={exportStaffDetails} className="btn btn-secondary">
               <Download size={16} />
@@ -502,14 +481,14 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                    Upload a CSV file containing your staff directory. Columns should include headers for <strong>Employee ID, Name, Email, Phone, Section</strong>.
+                    Upload an Excel or CSV file containing your staff directory. Columns should include headers for <strong>Employee ID, Name, Email, Phone, Section</strong>.
                   </p>
                   
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.85rem', fontWeight: '600' }}>Need a starting point?</span>
                     <button onClick={downloadCSVTemplate} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                       <FileText size={14} />
-                      Download Template CSV
+                      Download Template
                     </button>
                   </div>
 
@@ -520,7 +499,7 @@ export default function StaffManager({ currentUser, staffList, onRefreshStaff })
                     <input 
                       id="csv-file-picker"
                       type="file"
-                      accept=".csv"
+                      accept=".csv,.xlsx,.xls"
                       style={{ display: 'none' }}
                       onChange={handleFileChange}
                     />
