@@ -220,9 +220,13 @@ function AuthScreen({ onUser }) {
   return (
     <main className="auth-page">
       <section className="auth-panel">
-        <div className="brand-mark"><ShieldCheck /></div>
-        <h1>{APP_NAME}</h1>
-        <p>Secure guild collections, expenses, approvals, and reports.</p>
+        <div className="auth-head">
+          <div className="brand-mark"><ShieldCheck /></div>
+          <div>
+            <h1>Guild Accounts</h1>
+            <p>Kilinochchi Central College</p>
+          </div>
+        </div>
         {error && <div className="alert danger"><AlertTriangle size={16} />{error}</div>}
         <form onSubmit={submit} className="form-stack">
           {mode === 'signup' && (
@@ -664,8 +668,11 @@ function ExpenseModal({ events, onClose, reload }) {
 function ReportsPage({ staff, events, contributions, expenses }) {
   const [mode, setMode] = useState('event');
   const [eventId, setEventId] = useState('');
+  const [eventIds, setEventIds] = useState([]);
   const [range, setRange] = useState({ start: '', end: '' });
-  const report = useMemo(() => buildReport({ mode, eventId, range, staff, events, contributions, expenses }), [mode, eventId, range, staff, events, contributions, expenses]);
+  const [view, setView] = useState('details');
+  const [status, setStatus] = useState('all');
+  const report = useMemo(() => buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses }), [mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses]);
 
   const shareText = () => encodeURIComponent(report.summaryText || 'No report selected.');
   const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
@@ -682,13 +689,37 @@ function ReportsPage({ staff, events, contributions, expenses }) {
 
   return (
     <div className="page">
-      <PageTitle title="Reports" subtitle="Event-wise and custom range financial reports." />
-      <div className="tabs"><button className={mode === 'event' ? 'active' : ''} onClick={() => setMode('event')}>Single Event</button><button className={mode === 'range' ? 'active' : ''} onClick={() => setMode('range')}>Custom Range</button></div>
+      <PageTitle title="Reports" subtitle="Paid, unpaid, outstanding, event-wise, and staff-wise reports." />
+      <div className="tabs">
+        <button className={mode === 'event' ? 'active' : ''} onClick={() => setMode('event')}>Single Event</button>
+        <button className={mode === 'events' ? 'active' : ''} onClick={() => setMode('events')}>Selected Events</button>
+        <button className={mode === 'range' ? 'active' : ''} onClick={() => setMode('range')}>Custom Range</button>
+      </div>
       <section className="panel report-controls">
-        {mode === 'event' ? <label>Event<select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select event</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label> : <>
+        {mode === 'event' && (
+          <label>Event<select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select event</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+        )}
+        {mode === 'events' && (
+          <div className="multi-select">
+            <strong>Choose Events</strong>
+            {events.map((event) => (
+              <label key={event.id}>
+                <input
+                  type="checkbox"
+                  checked={eventIds.includes(event.id)}
+                  onChange={(e) => setEventIds(e.target.checked ? [...eventIds, event.id] : eventIds.filter((id) => id !== event.id))}
+                />
+                {event.name}
+              </label>
+            ))}
+          </div>
+        )}
+        {mode === 'range' && <>
           <label>Start<input type="date" value={range.start} onChange={(e) => setRange({ ...range, start: e.target.value })} /></label>
           <label>End<input type="date" value={range.end} onChange={(e) => setRange({ ...range, end: e.target.value })} /></label>
         </>}
+        <label>Report View<select value={view} onChange={(e) => setView(e.target.value)}><option value="details">Payment Details</option><option value="staff">Staff Summary</option></select></label>
+        <label>Status Filter<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">All Staff</option><option value="paid">Paid Only</option><option value="unpaid">Unpaid Only</option><option value="outstanding">Has Outstanding</option></select></label>
         <div className="row-actions">
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportPdf}><FileText size={16} />PDF</button>
@@ -696,53 +727,135 @@ function ReportsPage({ staff, events, contributions, expenses }) {
           <a className="secondary-btn" target="_blank" rel="noreferrer" href={`https://api.whatsapp.com/send?text=${shareText()}`}><Send size={16} />WhatsApp</a>
         </div>
       </section>
+      {report.stats && (
+        <div className="stats">
+          <Stat title="Events" value={report.stats.events} icon={CalendarDays} />
+          <Stat title="Collected" value={currency(report.stats.collected)} icon={Banknote} tone="good" />
+          <Stat title="Not Paid" value={currency(report.stats.due)} icon={XCircle} tone="bad" />
+          <Stat title="Paid / Unpaid" value={`${report.stats.paidCount} / ${report.stats.unpaidCount}`} icon={Users} tone="warn" />
+        </div>
+      )}
       {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
     </div>
   );
 }
 
-function buildReport({ mode, eventId, range, staff, events, contributions, expenses }) {
-  if (mode === 'event') {
-    const event = events.find((e) => e.id === eventId);
-    if (!event) return { title: 'Event Report', headers: [], rows: [], sheets: [], filename: 'event-report.pdf' };
-    const rows = staff.filter((s) => !event.exemptIds?.includes(s.id)).map((s) => {
-      const c = contributions.find((item) => item.eventId === event.id && item.staffId === s.id);
-      return [s.employeeId, s.name, c?.paid ? 'Paid' : 'Unpaid', currency(c?.amount || 0), c?.paid ? '-' : currency(event.amount)];
-    });
-    const collected = contributions.filter((c) => c.eventId === event.id && c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
-    const spent = expenses.filter((e) => e.eventId === event.id).reduce((sum, e) => sum + Number(e.amount || 0), 0);
-    return {
-      title: `${event.name} Report`,
-      headers: ['ID', 'Staff', 'Status', 'Paid', 'Due'],
-      rows,
-      filename: `${event.name.replace(/\s+/g, '-')}-report.pdf`,
-      summaryText: `${APP_NAME}\n${event.name}\nCollected: ${currency(collected)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}`,
-      sheets: [['Contributions', rows.map((r) => ({ ID: r[0], Staff: r[1], Status: r[2], Paid: r[3], Due: r[4] }))]]
-    };
+function buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses }) {
+  let selectedEvents = [];
+  if (mode === 'event') selectedEvents = events.filter((event) => event.id === eventId);
+  if (mode === 'events') selectedEvents = events.filter((event) => eventIds.includes(event.id));
+  if (mode === 'range') selectedEvents = events.filter((event) => range.start && range.end && event.date >= range.start && event.date <= range.end);
+
+  if (!selectedEvents.length) {
+    return { title: 'Guild Report', headers: [], rows: [], sheets: [], filename: 'guild-report.pdf' };
   }
 
-  const selectedEvents = events.filter((e) => range.start && range.end && e.date >= range.start && e.date <= range.end);
-  if (!selectedEvents.length) return { title: 'Range Report', headers: [], rows: [], sheets: [], filename: 'range-report.pdf' };
-  const rows = staff.map((s) => {
-    let paid = 0;
-    let due = 0;
-    selectedEvents.forEach((e) => {
-      if (e.exemptIds?.includes(s.id)) return;
-      const c = contributions.find((item) => item.eventId === e.id && item.staffId === s.id);
-      if (c?.paid) paid += Number(c.amount || 0);
-      else due += Number(e.amount || 0);
-    });
-    return [s.employeeId, s.name, currency(paid), currency(due)];
+  const detailRecords = selectedEvents.flatMap((event) => staff.map((person) => {
+    const exempt = event.exemptIds?.includes(person.id);
+    const contribution = contributions.find((item) => item.eventId === event.id && item.staffId === person.id);
+    const paid = !exempt && !!contribution?.paid;
+    const paidAmount = paid ? Number(contribution.amount || 0) : 0;
+    const dueAmount = exempt || paid ? 0 : Number(event.amount || 0);
+    return {
+      eventId: event.id,
+      eventName: event.name,
+      eventDate: event.date,
+      employeeId: person.employeeId,
+      staffName: person.name,
+      section: person.section || '',
+      status: exempt ? 'Exempt' : paid ? 'Paid' : 'Unpaid',
+      paidAmount,
+      dueAmount
+    };
+  }));
+
+  const staffRecords = staff.map((person) => {
+    const records = detailRecords.filter((record) => record.employeeId === person.employeeId);
+    return {
+      employeeId: person.employeeId,
+      staffName: person.name,
+      section: person.section || '',
+      paidEvents: records.filter((record) => record.status === 'Paid').length,
+      unpaidEvents: records.filter((record) => record.status === 'Unpaid').length,
+      exemptEvents: records.filter((record) => record.status === 'Exempt').length,
+      paidAmount: records.reduce((sum, record) => sum + record.paidAmount, 0),
+      dueAmount: records.reduce((sum, record) => sum + record.dueAmount, 0)
+    };
   });
-  const collected = selectedEvents.reduce((sum, e) => sum + contributions.filter((c) => c.eventId === e.id && c.paid).reduce((inner, c) => inner + Number(c.amount || 0), 0), 0);
-  const spent = selectedEvents.reduce((sum, e) => sum + expenses.filter((x) => x.eventId === e.id).reduce((inner, x) => inner + Number(x.amount || 0), 0), 0);
+
+  const filterDetails = (record) => {
+    if (status === 'paid') return record.status === 'Paid';
+    if (status === 'unpaid' || status === 'outstanding') return record.status === 'Unpaid';
+    return true;
+  };
+  const filterStaff = (record) => {
+    if (status === 'paid') return record.paidEvents > 0;
+    if (status === 'unpaid' || status === 'outstanding') return record.dueAmount > 0;
+    return true;
+  };
+
+  const visibleDetails = detailRecords.filter(filterDetails);
+  const visibleStaff = staffRecords.filter(filterStaff);
+  const rows = view === 'staff'
+    ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.section, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
+    : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.section, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
+
+  const headers = view === 'staff'
+    ? ['ID', 'Staff', 'Section', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
+    : ['Event', 'Date', 'ID', 'Staff', 'Section', 'Status', 'Paid', 'Not Paid'];
+
+  const collected = detailRecords.reduce((sum, record) => sum + record.paidAmount, 0);
+  const due = detailRecords.reduce((sum, record) => sum + record.dueAmount, 0);
+  const spent = selectedEvents.reduce((sum, event) => sum + expenses.filter((expense) => expense.eventId === event.id).reduce((inner, expense) => inner + Number(expense.amount || 0), 0), 0);
+  const paidCount = detailRecords.filter((record) => record.status === 'Paid').length;
+  const unpaidCount = detailRecords.filter((record) => record.status === 'Unpaid').length;
+  const title = mode === 'event'
+    ? `${selectedEvents[0].name} Payment Report`
+    : mode === 'events'
+      ? `Selected Events Payment Report`
+      : `Payment Report ${range.start} to ${range.end}`;
+
   return {
-    title: `Range Report ${range.start} to ${range.end}`,
-    headers: ['ID', 'Staff', 'Total Paid', 'Total Due'],
+    title,
+    headers,
     rows,
-    filename: `range-${range.start}-to-${range.end}.pdf`,
-    summaryText: `${APP_NAME}\n${range.start} to ${range.end}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}`,
-    sheets: [['Range Summary', rows.map((r) => ({ ID: r[0], Staff: r[1], Paid: r[2], Due: r[3] }))]]
+    filename: `${title.replace(/\s+/g, '-').toLowerCase()}.pdf`,
+    stats: { events: selectedEvents.length, collected, due, spent, paidCount, unpaidCount },
+    summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nNot Paid: ${currency(due)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
+    sheets: [
+      ['Payment Details', visibleDetails.map((record) => ({
+        Event: record.eventName,
+        Date: record.eventDate,
+        ID: record.employeeId,
+        Staff: record.staffName,
+        Section: record.section,
+        Status: record.status,
+        Paid: record.paidAmount,
+        'Not Paid': record.dueAmount
+      }))],
+      ['Staff Summary', visibleStaff.map((record) => ({
+        ID: record.employeeId,
+        Staff: record.staffName,
+        Section: record.section,
+        'Paid Events': record.paidEvents,
+        'Unpaid Events': record.unpaidEvents,
+        'Exempt Events': record.exemptEvents,
+        'Total Paid': record.paidAmount,
+        'Total Not Paid': record.dueAmount
+      }))],
+      ['Event Summary', selectedEvents.map((event) => {
+        const records = detailRecords.filter((record) => record.eventId === event.id);
+        return {
+          Event: event.name,
+          Date: event.date,
+          Collected: records.reduce((sum, record) => sum + record.paidAmount, 0),
+          'Not Paid': records.reduce((sum, record) => sum + record.dueAmount, 0),
+          Paid: records.filter((record) => record.status === 'Paid').length,
+          Unpaid: records.filter((record) => record.status === 'Unpaid').length,
+          Exempt: records.filter((record) => record.status === 'Exempt').length
+        };
+      })]
+    ]
   };
 }
 
