@@ -543,25 +543,69 @@ function DataTable({ headers, children }) {
 
 function EventsPage({ user, staff, events, contributions, expenses, reload }) {
   const [modal, setModal] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({ name: '', date: today(), amount: '', exemptIds: [] });
   const authorized = canManage(user);
   const activeStaff = staff.filter((person) => (person.serviceStatus || 'Active') === 'Active');
 
-  const create = async (event) => {
-    event.preventDefault();
-    const id = `event_${Date.now()}`;
-    const batch = writeBatch(db);
-    const eventData = { id, name: form.name, date: form.date, amount: Number(form.amount), exemptIds: form.exemptIds, createdAt: new Date().toISOString() };
-    batch.set(doc(db, 'events', id), eventData);
-    activeStaff.forEach((s) => {
-      const exempt = form.exemptIds.includes(s.id);
-      const cid = `${id}_${s.id}`;
-      batch.set(doc(db, 'contributions', cid), { id: cid, eventId: id, staffId: s.id, staffName: s.name, exempt, paid: false, amount: 0, updatedAt: new Date().toISOString() });
-    });
-    await batch.commit();
-    setModal(false);
+  const resetEventForm = () => {
+    setEditingEvent(null);
     setForm({ name: '', date: today(), amount: '', exemptIds: [] });
+    setModal(false);
+  };
+
+  const openCreateEvent = () => {
+    setEditingEvent(null);
+    setForm({ name: '', date: today(), amount: '', exemptIds: [] });
+    setModal(true);
+  };
+
+  const openEditEvent = (event) => {
+    setEditingEvent(event);
+    setForm({
+      name: event.name || '',
+      date: event.date || today(),
+      amount: event.amount || '',
+      exemptIds: event.exemptIds || []
+    });
+    setModal(true);
+  };
+
+  const saveEvent = async (event) => {
+    event.preventDefault();
+    const id = editingEvent?.id || `event_${Date.now()}`;
+    const batch = writeBatch(db);
+    const existingEventContributions = contributions.filter((item) => item.eventId === id);
+    const eventData = {
+      id,
+      name: form.name,
+      date: form.date,
+      amount: Number(form.amount),
+      exemptIds: form.exemptIds,
+      createdAt: editingEvent?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    batch.set(doc(db, 'events', id), eventData);
+    if (!editingEvent) {
+      activeStaff.forEach((s) => {
+        const exempt = form.exemptIds.includes(s.id);
+        const cid = `${id}_${s.id}`;
+        batch.set(doc(db, 'contributions', cid), { id: cid, eventId: id, staffId: s.id, staffName: s.name, exempt, paid: false, amount: 0, updatedAt: new Date().toISOString() });
+      });
+    } else {
+      existingEventContributions.forEach((item) => {
+        const exempt = form.exemptIds.includes(item.staffId);
+        batch.update(doc(db, 'contributions', item.id), {
+          exempt,
+          amount: exempt ? 0 : Number(item.amount || 0),
+          paid: exempt ? false : !!item.paid,
+          updatedAt: new Date().toISOString()
+        });
+      });
+    }
+    await batch.commit();
+    resetEventForm();
     reload();
   };
 
@@ -581,7 +625,7 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
 
   return (
     <div className="page">
-      <PageTitle title="Events & Contributions" subtitle="Create events, exempt organizers, and record staff payments." actions={authorized && <button className="primary-btn" onClick={() => setModal(true)}><Plus size={16} />New Event</button>} />
+      <PageTitle title="Events & Contributions" subtitle="Create events, exempt organizers, and record staff payments." actions={authorized && <button className="primary-btn" onClick={openCreateEvent}><Plus size={16} />New Event</button>} />
       <div className="cards">
         {events.map((event) => {
           const eventRows = contributions.filter((c) => c.eventId === event.id);
@@ -592,21 +636,24 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
             <section className="event-card" key={event.id}>
               <header><div><h2>{event.name}</h2><p>{event.date}</p></div>{authorized && <button className="icon-btn danger" onClick={() => remove(event)}><Trash2 size={16} /></button>}</header>
               <div className="event-metrics"><span>Collected <b>{currency(collected)}</b></span><span>Expected <b>{currency(expected)}</b></span><span>Unpaid <b>{unpaid}</b></span></div>
-              <button className="secondary-btn" onClick={() => setSelected(event)}>Manage Payments</button>
+              <div className="row-actions">
+                {authorized && <button className="secondary-btn" onClick={() => openEditEvent(event)}>Edit Event</button>}
+                <button className="secondary-btn" onClick={() => setSelected(event)}>Manage Payments</button>
+              </div>
             </section>
           );
         })}
       </div>
       {events.length === 0 && <EmptyState title="No events yet" text="Create your first guild event to start tracking contributions." />}
-      {modal && <Modal title="Create Event" onClose={() => setModal(false)}>
-        <form onSubmit={create} className="modal-body form-stack">
+      {modal && <Modal title={editingEvent ? 'Edit Event' : 'Create Event'} onClose={resetEventForm}>
+        <form onSubmit={saveEvent} className="modal-body form-stack">
           <label>Event Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
           <label>Event Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
           <label>Contribution Per Staff<input type="number" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <div><strong>Exempt event staff</strong><div className="check-grid">
             {activeStaff.map((s) => <label key={s.id}><input type="checkbox" checked={form.exemptIds.includes(s.id)} onChange={(e) => setForm({ ...form, exemptIds: e.target.checked ? [...form.exemptIds, s.id] : form.exemptIds.filter((id) => id !== s.id) })} />{s.name}</label>)}
           </div></div>
-          <button className="primary-btn">Create Event</button>
+          <button className="primary-btn">{editingEvent ? 'Save Event' : 'Create Event'}</button>
         </form>
       </Modal>}
     </div>
@@ -618,16 +665,45 @@ function EventDetail({ event, staff, contributions, authorized, onBack, reload }
   const visible = contributions.filter((c) => c.staffName.toLowerCase().includes(search.toLowerCase()));
   const collected = contributions.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const expected = contributions.filter((c) => !c.exempt).length * Number(event.amount || 0);
+  const missingActiveStaff = staff
+    .filter((person) => (person.serviceStatus || 'Active') === 'Active')
+    .filter((person) => !contributions.some((item) => item.staffId === person.id))
+    .sort(sortByStaffNumber);
 
   const updateContribution = async (item, changes) => {
     await updateDoc(doc(db, 'contributions', item.id), { ...changes, updatedAt: new Date().toISOString() });
     reload();
   };
 
+  const syncMissingStaff = async () => {
+    if (!missingActiveStaff.length) {
+      alert('No missing active staff found for this event.');
+      return;
+    }
+    const batch = writeBatch(db);
+    missingActiveStaff.forEach((person) => {
+      const contributionId = `${event.id}_${person.id}`;
+      const exempt = event.exemptIds?.includes(person.id);
+      batch.set(doc(db, 'contributions', contributionId), {
+        id: contributionId,
+        eventId: event.id,
+        staffId: person.id,
+        staffName: person.name,
+        exempt,
+        paid: false,
+        amount: 0,
+        updatedAt: new Date().toISOString()
+      });
+    });
+    await batch.commit();
+    reload();
+    alert(`${missingActiveStaff.length} missing staff added to this event.`);
+  };
+
   return (
     <div className="page">
       <button className="secondary-btn" onClick={onBack}><ChevronLeft size={16} />Back</button>
-      <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} />
+      <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} actions={authorized && <button className="secondary-btn" onClick={syncMissingStaff}>Add Missing Staff ({missingActiveStaff.length})</button>} />
       <div className="stats">
         <Stat title="Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
         <Stat title="Outstanding" value={currency(expected - collected)} icon={XCircle} tone="bad" />
