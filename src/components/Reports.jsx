@@ -13,6 +13,9 @@ import {
   X as XIcon, 
   Info 
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
 
 export default function Reports({ staffList, eventsList, contributionsList, expensesList }) {
   const [activeTab, setActiveTab] = useState('single');
@@ -73,13 +76,9 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
   // ----------------------------------------------------
   const getEventsInRange = () => {
     if (!startDate || !endDate) return [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999); // Include full end date
-
     return eventsList.filter(e => {
-      const eventDate = new Date(e.date);
-      return eventDate >= start && eventDate <= end;
+      // Direct string comparison is timezone-safe for YYYY-MM-DD formats
+      return e.date >= startDate && e.date <= endDate;
     });
   };
 
@@ -205,7 +204,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
   // EXCEL EXPORT (CSV FORMAT GENERATION)
   // ----------------------------------------------------
   const handleExportExcel = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
+    let csvContent = "";
     
     if (activeTab === 'single' && singleEventObj) {
       csvContent += `"Kilinochchi Central College - School Guild Account Management"\n`;
@@ -257,9 +256,10 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
       return;
     }
     
-    const encodedUri = encodeURI(csvContent);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", activeTab === 'single' ? `event_report_${singleEventObj?.name.replace(/\s+/g, '_')}.csv` : `guild_report_${startDate}_to_${endDate}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -269,12 +269,8 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
   // ----------------------------------------------------
   // PDF EXPORT (jsPDF & jsPDF-AutoTable Dynamic Loading)
   // ----------------------------------------------------
-  const handleExportPDF = async () => {
+  const handleExportPDF = () => {
     try {
-      // Dynamic import or check of jsPDF
-      const { jsPDF } = await import('jspdf');
-      await import('jspdf-autotable');
-      
       const doc = new jsPDF();
       
       // Header Section
@@ -326,7 +322,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
         doc.setFont('Helvetica', 'bold');
         doc.text("Paid Contributions List", 14, finalY + 44);
         
-        doc.autoTable({
+        autoTable(doc, {
           startY: finalY + 48,
           head: [['Employee ID', 'Staff Name', 'Amount Contributed', 'Payment Date']],
           body: paidRows,
@@ -340,7 +336,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
         doc.setFont('Helvetica', 'bold');
         doc.text("Unpaid Staff List", 14, finalY);
         
-        doc.autoTable({
+        autoTable(doc, {
           startY: finalY + 4,
           head: [['Employee ID', 'Staff Name', 'Target Amount Due']],
           body: unpaidRows,
@@ -386,7 +382,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
             row.employeeId
           ];
           eventsInRange.forEach(e => {
-            const sum = row.eventSummary[e.id];
+            const sum = row.eventSummary[e.id] || { status: 'unpaid', amount: 0 };
             if (sum.status === 'exempt') cells.push('Exempt');
             else if (sum.status === 'paid') cells.push(`Rs.${sum.amount}`);
             else cells.push('Unpaid');
@@ -399,7 +395,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
         doc.setFont('Helvetica', 'bold');
         doc.text("Event-wise Contributions Summary", 14, finalY + 44);
         
-        doc.autoTable({
+        autoTable(doc, {
           startY: finalY + 48,
           head: [headers],
           body: bodyRows,
@@ -533,7 +529,7 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
               </div>
 
               {/* Lists Split side-by-side */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+              <div className="reports-lists-grid">
                 {/* Paid table */}
                 <div className="card-table-wrapper">
                   <div className="table-header-bar" style={{ backgroundColor: 'var(--success-bg)', borderBottomColor: 'var(--success-border)' }}>
@@ -738,10 +734,10 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{row.employeeId}</div>
                           </td>
                           {eventsInRange.map(event => {
-                            const statusObj = row.eventSummary[event.id];
-                            return (
-                              <td key={event.id}>
-                                {statusObj.status === 'exempt' ? (
+                             const statusObj = row.eventSummary[event.id] || { status: 'unpaid', amount: 0 };
+                             return (
+                               <td key={event.id}>
+                                 {statusObj.status === 'exempt' ? (
                                   <span className="badge badge-warn" style={{ transform: 'scale(0.85)', padding: '2px 6px', fontSize: '0.65rem' }}>Exempt</span>
                                 ) : statusObj.status === 'paid' ? (
                                   <span className="badge badge-success" style={{ transform: 'scale(0.85)', padding: '2px 6px', fontSize: '0.65rem' }}>Rs. {statusObj.amount}</span>

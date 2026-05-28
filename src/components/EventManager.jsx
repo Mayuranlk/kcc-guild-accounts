@@ -518,7 +518,7 @@ export default function EventManager({ currentUser, staffList, eventsList, contr
               </button>
             </div>
             <form onSubmit={handleSaveEvent}>
-              <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px' }}>
+              <div className="modal-body modal-body-grid">
                 {/* Left side details */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div className="form-group">

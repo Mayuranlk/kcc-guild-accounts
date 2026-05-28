@@ -27,7 +27,9 @@ import {
   Receipt, 
   FilePieChart, 
   LogOut,
-  AlertTriangle 
+  AlertTriangle,
+  Menu,
+  X
 } from 'lucide-react';
 
 export default function App() {
@@ -40,6 +42,9 @@ export default function App() {
   const [eventsList, setEventsList] = useState([]);
   const [contributionsList, setContributionsList] = useState([]);
   const [expensesList, setExpensesList] = useState([]);
+
+  // Mobile Drawer State
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // ----------------------------------------------------
   // AUTHENTICATION SYNC
@@ -184,9 +189,30 @@ export default function App() {
   // Main Dashboard Shell
   return (
     <div className="app-container">
+      {/* Mobile Header Bar */}
+      <header className="mobile-header-bar">
+        <button 
+          className="mobile-menu-toggle" 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label="Toggle Navigation Menu"
+        >
+          <Menu size={24} />
+        </button>
+        <span className="mobile-header-title">KCC Guild Accounts</span>
+        <div style={{ width: 24 }}></div> {/* Spacer */}
+      </header>
+
+      {/* Sidebar Backdrop Overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="sidebar-overlay visible" 
+          onClick={() => setMobileMenuOpen(false)}
+        ></div>
+      )}
+
       {/* Sidebar Navigation */}
-      <aside className="sidebar">
-        <div className="sidebar-header">
+      <aside className={`sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-header" style={{ position: 'relative' }}>
           <div className="school-logo">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 22, height: 22 }}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
           </div>
@@ -194,39 +220,48 @@ export default function App() {
             <h2 className="sidebar-title">Kilinochchi Central</h2>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Guild Account Manager</p>
           </div>
+          
+          {/* Close button in mobile drawer */}
+          <button 
+            className="mobile-menu-close-btn"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close Navigation Menu"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="sidebar-menu">
           <div 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} 
             className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
           >
             <LayoutDashboard size={18} />
             <span>Dashboard</span>
           </div>
           <div 
-            onClick={() => setActiveTab('staff')} 
+            onClick={() => { setActiveTab('staff'); setMobileMenuOpen(false); }} 
             className={`sidebar-item ${activeTab === 'staff' ? 'active' : ''}`}
           >
             <Users size={18} />
             <span>Staff Details</span>
           </div>
           <div 
-            onClick={() => setActiveTab('events')} 
+            onClick={() => { setActiveTab('events'); setMobileMenuOpen(false); }} 
             className={`sidebar-item ${activeTab === 'events' ? 'active' : ''}`}
           >
             <Calendar size={18} />
             <span>Events & Dues</span>
           </div>
           <div 
-            onClick={() => setActiveTab('expenses')} 
+            onClick={() => { setActiveTab('expenses'); setMobileMenuOpen(false); }} 
             className={`sidebar-item ${activeTab === 'expenses' ? 'active' : ''}`}
           >
             <Receipt size={18} />
             <span>Expenses Log</span>
           </div>
           <div 
-            onClick={() => setActiveTab('reports')} 
+            onClick={() => { setActiveTab('reports'); setMobileMenuOpen(false); }} 
             className={`sidebar-item ${activeTab === 'reports' ? 'active' : ''}`}
           >
             <FilePieChart size={18} />

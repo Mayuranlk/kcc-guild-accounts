@@ -203,7 +203,7 @@ export default function ExpenseManager({ currentUser, eventsList, expensesList, 
       </div>
 
       {/* Select Event Filter */}
-      <div className="report-filter-bar" style={{ gridTemplateColumns: '1.5fr 1fr', alignItems: 'flex-end', marginBottom: '24px' }}>
+      <div className="expense-filter-bar">
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label className="form-label">Analyze Event Budget</label>
           <select 

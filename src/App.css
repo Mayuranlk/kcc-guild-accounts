@@ -1175,45 +1175,183 @@
   }
   
   /* ==========================================
+     MOBILE HEADER & OVERLAY (DESKTOP HIDDEN)
+     ========================================== */
+  
+  .mobile-header-bar {
+    display: none;
+  }
+  
+  .mobile-menu-close-btn {
+    display: none;
+  }
+  
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 190;
+    opacity: 0;
+    pointer-events: none;
+    transition: var(--transition-smooth);
+  }
+  
+  .sidebar-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ==========================================
+     RESPONSIVE GRIDS FOR EVENTS, EXPENSES & REPORTS
+     ========================================== */
+  
+  .reports-lists-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  
+  .modal-body-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 24px;
+  }
+  
+  .expense-filter-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 24px;
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 16px;
+    align-items: flex-end;
+  }
+  
+  @media (max-width: 992px) {
+    .reports-lists-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ==========================================
      RESPONSIVE BREAKPOINTS
      ========================================== */
   
   @media (max-width: 768px) {
+    .mobile-header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      background-color: var(--bg-surface);
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 16px;
+      position: sticky;
+      top: 0;
+      z-index: 150;
+    }
+    
+    .mobile-header-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      font-family: var(--font-heading);
+      background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    .mobile-menu-toggle {
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-sm);
+      transition: var(--transition-fast);
+    }
+    
+    .mobile-menu-toggle:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+  
+    .mobile-menu-close-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      cursor: pointer;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-sm);
+      transition: var(--transition-fast);
+    }
+    
+    .mobile-menu-close-btn:hover {
+      color: var(--text-primary);
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+  
     .app-container {
       flex-direction: column;
     }
     
     .sidebar {
-      width: 100%;
-      height: auto;
-      position: relative;
-      border-right: none;
-      border-bottom: 1px solid var(--border-color);
-      padding: 16px;
+      position: fixed !important;
+      top: 0;
+      left: -280px;
+      width: 280px;
+      height: 100vh;
+      z-index: 200;
+      box-shadow: var(--shadow-lg);
+      transition: var(--transition-smooth);
+      background-color: var(--bg-surface);
+      border-right: 1px solid var(--border-color);
+      border-bottom: none;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .sidebar.mobile-open {
+      left: 0;
     }
     
     .sidebar-header {
-      padding-bottom: 12px;
-      margin-bottom: 12px;
+      padding-bottom: 24px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border-color);
     }
     
     .sidebar-menu {
-      flex-direction: row;
-      flex-wrap: wrap;
-      gap: 4px;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 8px;
     }
     
     .sidebar-item {
-      padding: 8px 12px;
-      font-size: 0.85rem;
+      padding: 12px 16px;
+      font-size: 0.95rem;
     }
     
     .sidebar-footer {
-      display: none; /* Hide profile in mobile top menu */
+      display: flex; /* Keep profile/sign-out in mobile menu drawer */
     }
     
     .main-content {
       padding: 20px;
+      min-height: calc(100vh - 60px);
     }
     
     .content-header {
@@ -1231,6 +1369,15 @@
     }
     
     .form-row {
+      grid-template-columns: 1fr;
+    }
+
+    .modal-body-grid {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    
+    .expense-filter-bar {
       grid-template-columns: 1fr;
     }
   }
