@@ -77,6 +77,12 @@ const STAFF_SERVICE_STATUSES = ['Active', 'Transferred', 'Temporary attachment t
 const currency = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const canManage = (user) => ['admin', 'treasurer'].includes(user?.role);
+const staffCategory = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized.includes('non')) return 'Non Academic';
+  if (normalized.includes('attach')) return 'Attachment';
+  return 'Academic';
+};
 
 function parseCsv(text) {
   return text
@@ -123,7 +129,7 @@ function normalizeStaffRows(rows) {
       name,
       email: String(row[indexes.email] || '').trim(),
       phone: String(row[indexes.phone] || '').trim(),
-      category: String(row[indexes.category] || 'Academic').trim(),
+      category: staffCategory(row[indexes.category]),
       serviceStatus: String(row[indexes.serviceStatus] || 'Active').trim(),
       statusDate: String(row[indexes.statusDate] || '').trim(),
       updatedAt: new Date().toISOString()
@@ -370,14 +376,14 @@ function StaffPage({ user, staff, reload }) {
   const emptyStaffForm = { employeeId: '', name: '', email: '', phone: '', category: 'Academic', serviceStatus: 'Active', statusDate: '' };
   const [form, setForm] = useState(emptyStaffForm);
   const authorized = user.role === 'admin';
-  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, s.category || s.section, s.serviceStatus].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, staffCategory(s.category || s.section), s.serviceStatus].join(' ').toLowerCase().includes(search.toLowerCase()));
 
   const open = (item = null) => {
     setEditing(item);
     setForm(item ? {
       ...emptyStaffForm,
       ...item,
-      category: item.category || item.section || 'Academic',
+      category: staffCategory(item.category || item.section),
       serviceStatus: item.serviceStatus || 'Active',
       statusDate: item.statusDate || ''
     } : emptyStaffForm);
@@ -410,7 +416,7 @@ function StaffPage({ user, staff, reload }) {
       Name: s.name,
       Email: s.email,
       Phone: s.phone,
-      Category: s.category || s.section || '',
+      Category: staffCategory(s.category || s.section),
       'Service Status': s.serviceStatus || 'Active',
       'Status Date': s.statusDate || ''
     }))
@@ -431,7 +437,7 @@ function StaffPage({ user, staff, reload }) {
       <DataTable headers={['ID', 'Name', 'Email', 'Phone', 'Category', 'Status', 'Status Date', authorized ? 'Actions' : '']}>
         {visible.map((s) => (
           <tr key={s.id}>
-            <td>{s.employeeId}</td><td><strong>{s.name}</strong></td><td>{s.email}</td><td>{s.phone}</td><td>{s.category || s.section}</td><td>{s.serviceStatus || 'Active'}</td><td>{s.statusDate || '-'}</td>
+            <td>{s.employeeId}</td><td><strong>{s.name}</strong></td><td>{s.email}</td><td>{s.phone}</td><td>{staffCategory(s.category || s.section)}</td><td>{s.serviceStatus || 'Active'}</td><td>{s.statusDate || '-'}</td>
             {authorized && <td className="table-actions"><button onClick={() => open(s)}>Edit</button><button onClick={() => remove(s)}>Delete</button></td>}
           </tr>
         ))}
@@ -723,7 +729,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
 
   const shareText = () => encodeURIComponent(report.summaryText || 'No report selected.');
   const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
-  const exportPdf = () => {
+  const createPdf = () => {
     if (!report.rows.length) return;
     const pdf = new jsPDF();
     pdf.setFontSize(14);
@@ -731,7 +737,29 @@ function ReportsPage({ staff, events, contributions, expenses }) {
     pdf.setFontSize(10);
     pdf.text(report.title, 14, 22);
     autoTable(pdf, { startY: 30, head: [report.headers], body: report.rows, styles: { fontSize: 8 } });
+    return pdf;
+  };
+  const exportPdf = () => {
+    const pdf = createPdf();
+    if (!pdf) return;
     pdf.save(report.filename);
+  };
+  const sharePdfWhatsapp = async () => {
+    const pdf = createPdf();
+    if (!pdf) return;
+    const blob = pdf.output('blob');
+    const file = new File([blob], report.filename, { type: 'application/pdf' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({
+        title: report.title,
+        text: report.summaryText,
+        files: [file]
+      });
+      return;
+    }
+    pdf.save(report.filename);
+    window.open(`https://api.whatsapp.com/send?text=${shareText()}`, '_blank', 'noopener,noreferrer');
+    alert('Your browser cannot attach a PDF directly to WhatsApp. The PDF has been downloaded; attach it manually in WhatsApp.');
   };
 
   return (
@@ -771,7 +799,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportPdf}><FileText size={16} />PDF</button>
           <a className="secondary-btn" href={`mailto:?subject=${encodeURIComponent(report.title)}&body=${shareText()}`}><Mail size={16} />Email</a>
-          <a className="secondary-btn" target="_blank" rel="noreferrer" href={`https://api.whatsapp.com/send?text=${shareText()}`}><Send size={16} />WhatsApp</a>
+          <button className="secondary-btn" disabled={!report.rows.length} onClick={sharePdfWhatsapp}><Send size={16} />WhatsApp PDF</button>
         </div>
       </section>
       {report.stats && (
@@ -809,7 +837,7 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
       eventDate: event.date,
       employeeId: person.employeeId,
       staffName: person.name,
-      category: person.category || person.section || '',
+      category: staffCategory(person.category || person.section),
       serviceStatus: person.serviceStatus || 'Active',
       statusDate: person.statusDate || '',
       status: exempt ? 'Exempt' : paid ? 'Paid' : 'Unpaid',
@@ -823,7 +851,7 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     return {
       employeeId: person.employeeId,
       staffName: person.name,
-      category: person.category || person.section || '',
+      category: staffCategory(person.category || person.section),
       serviceStatus: person.serviceStatus || 'Active',
       statusDate: person.statusDate || '',
       paidEvents: records.filter((record) => record.status === 'Paid').length,
