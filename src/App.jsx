@@ -233,35 +233,35 @@ export default function App() {
 
         <nav className="sidebar-menu">
           <div 
-            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} 
+            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); fetchData(); }} 
             className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
           >
             <LayoutDashboard size={18} />
             <span>Dashboard</span>
           </div>
           <div 
-            onClick={() => { setActiveTab('staff'); setMobileMenuOpen(false); }} 
+            onClick={() => { setActiveTab('staff'); setMobileMenuOpen(false); fetchData(); }} 
             className={`sidebar-item ${activeTab === 'staff' ? 'active' : ''}`}
           >
             <Users size={18} />
             <span>Staff Details</span>
           </div>
           <div 
-            onClick={() => { setActiveTab('events'); setMobileMenuOpen(false); }} 
+            onClick={() => { setActiveTab('events'); setMobileMenuOpen(false); fetchData(); }} 
             className={`sidebar-item ${activeTab === 'events' ? 'active' : ''}`}
           >
             <Calendar size={18} />
             <span>Events & Dues</span>
           </div>
           <div 
-            onClick={() => { setActiveTab('expenses'); setMobileMenuOpen(false); }} 
+            onClick={() => { setActiveTab('expenses'); setMobileMenuOpen(false); fetchData(); }} 
             className={`sidebar-item ${activeTab === 'expenses' ? 'active' : ''}`}
           >
             <Receipt size={18} />
             <span>Expenses Log</span>
           </div>
           <div 
-            onClick={() => { setActiveTab('reports'); setMobileMenuOpen(false); }} 
+            onClick={() => { setActiveTab('reports'); setMobileMenuOpen(false); fetchData(); }} 
             className={`sidebar-item ${activeTab === 'reports' ? 'active' : ''}`}
           >
             <FilePieChart size={18} />

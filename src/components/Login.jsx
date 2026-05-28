@@ -252,7 +252,7 @@ export default function Login({ onAuthSuccess }) {
               <input
                 type="email"
                 required
-                placeholder="example@kcc.edu"
+                placeholder="example@gmail.com"
                 className="form-control"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

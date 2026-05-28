@@ -403,6 +403,25 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
           headStyles: { fillColor: [15, 23, 42], fontSize: 8 },
           styles: { fontSize: 7 }
         });
+
+        // Add Outstanding Dues Table in Custom Range PDF
+        finalY = doc.previousAutoTable.finalY + 12;
+        const outstandingRows = staffRangeSummary
+          .filter(s => s.totalDue > 0)
+          .sort((a, b) => b.totalDue - a.totalDue)
+          .map(s => [s.employeeId, s.name, s.department, `Rs. ${s.totalPaid}`, `Rs. ${s.totalDue}`]);
+          
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.text("Outstanding Dues Summary (Unpaid Members)", 14, finalY);
+        
+        autoTable(doc, {
+          startY: finalY + 4,
+          head: [['Employee ID', 'Staff Name', 'Department', 'Total Paid', 'Total Outstanding']],
+          body: outstandingRows,
+          theme: 'striped',
+          headStyles: { fillColor: [220, 38, 38] }
+        });
       } else {
         alert("Please configure date range filters to export PDF.");
         return;
@@ -755,6 +774,46 @@ export default function Reports({ staffList, eventsList, contributionsList, expe
                           </td>
                         </tr>
                       ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Outstanding Dues Summary */}
+              <div className="card-table-wrapper" style={{ marginTop: '32px' }}>
+                <div className="table-header-bar" style={{ backgroundColor: 'var(--danger-bg)', borderBottomColor: 'var(--danger-border)' }}>
+                  <h3 className="table-title" style={{ color: 'var(--danger)' }}>Outstanding Dues Summary (Unpaid Members)</h3>
+                </div>
+                <div className="custom-table-container">
+                  <table className="custom-table">
+                    <thead>
+                      <tr>
+                        <th>Employee ID</th>
+                        <th>Staff Name</th>
+                        <th>Department</th>
+                        <th>Total Paid (in Range)</th>
+                        <th>Total Outstanding Dues</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {staffRangeSummary.filter(s => s.totalDue > 0).length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: 'center', color: 'var(--success)', padding: '16px' }}>All active members paid for all events in this range! Excellent.</td>
+                        </tr>
+                      ) : (
+                        staffRangeSummary
+                          .filter(s => s.totalDue > 0)
+                          .sort((a, b) => b.totalDue - a.totalDue)
+                          .map(s => (
+                            <tr key={s.id}>
+                              <td style={{ color: 'var(--primary)', fontWeight: '600' }}>{s.employeeId}</td>
+                              <td style={{ fontWeight: '500' }}>{s.name}</td>
+                              <td>{s.department}</td>
+                              <td style={{ color: 'var(--success)', fontWeight: '600' }}>Rs. {s.totalPaid.toLocaleString()}</td>
+                              <td style={{ color: 'var(--danger)', fontWeight: '700' }}>Rs. {s.totalDue.toLocaleString()}</td>
+                            </tr>
+                          ))
+                      )}
                     </tbody>
                   </table>
                 </div>
