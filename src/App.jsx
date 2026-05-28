@@ -672,6 +672,20 @@ function ReportsPage({ staff, events, contributions, expenses }) {
   const [range, setRange] = useState({ start: '', end: '' });
   const [view, setView] = useState('details');
   const [status, setStatus] = useState('all');
+  const statusOptions = view === 'staff'
+    ? [
+      ['all', 'All Staff'],
+      ['paid', 'Fully Paid'],
+      ['unpaid', 'Not Paid Any'],
+      ['outstanding', 'Has Outstanding'],
+      ['exempt', 'Exempt Only']
+    ]
+    : [
+      ['all', 'All Records'],
+      ['paid', 'Paid Only'],
+      ['unpaid', 'Unpaid Only'],
+      ['exempt', 'Exempt Only']
+    ];
   const report = useMemo(() => buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses }), [mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses]);
 
   const shareText = () => encodeURIComponent(report.summaryText || 'No report selected.');
@@ -718,8 +732,8 @@ function ReportsPage({ staff, events, contributions, expenses }) {
           <label>Start<input type="date" value={range.start} onChange={(e) => setRange({ ...range, start: e.target.value })} /></label>
           <label>End<input type="date" value={range.end} onChange={(e) => setRange({ ...range, end: e.target.value })} /></label>
         </>}
-        <label>Report View<select value={view} onChange={(e) => setView(e.target.value)}><option value="details">Payment Details</option><option value="staff">Staff Summary</option></select></label>
-        <label>Status Filter<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">All Staff</option><option value="paid">Paid Only</option><option value="unpaid">Unpaid Only</option><option value="outstanding">Has Outstanding</option></select></label>
+        <label>Report View<select value={view} onChange={(e) => { setView(e.target.value); setStatus('all'); }}><option value="details">Payment Details</option><option value="staff">Staff Summary</option></select></label>
+        <label>Status Filter<select value={status} onChange={(e) => setStatus(e.target.value)}>{statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <div className="row-actions">
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportPdf}><FileText size={16} />PDF</button>
@@ -786,11 +800,14 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const filterDetails = (record) => {
     if (status === 'paid') return record.status === 'Paid';
     if (status === 'unpaid' || status === 'outstanding') return record.status === 'Unpaid';
+    if (status === 'exempt') return record.status === 'Exempt';
     return true;
   };
   const filterStaff = (record) => {
-    if (status === 'paid') return record.paidEvents > 0;
-    if (status === 'unpaid' || status === 'outstanding') return record.dueAmount > 0;
+    if (status === 'paid') return record.dueAmount === 0 && record.paidEvents > 0;
+    if (status === 'unpaid') return record.paidAmount === 0 && record.dueAmount > 0;
+    if (status === 'outstanding') return record.dueAmount > 0;
+    if (status === 'exempt') return record.exemptEvents > 0 && record.paidEvents === 0 && record.unpaidEvents === 0;
     return true;
   };
 
