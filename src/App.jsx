@@ -72,7 +72,7 @@ const EXPENSE_CATEGORIES = [
   'Other'
 ];
 const STAFF_CATEGORIES = ['Academic', 'Non Academic', 'Attachment'];
-const STAFF_SERVICE_STATUSES = ['Active', 'Transferred', 'Temporary attachment to another school'];
+const STAFF_SERVICE_STATUSES = ['Active', 'Transferred', 'Temporary attachment to another school', 'Medical Leave'];
 
 const currency = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -499,7 +499,8 @@ function BulkUploadModal({ onClose, reload }) {
       ['Employee ID', 'Name', 'Email', 'Phone', 'Category', 'Service Status', 'Status Date'],
       ['EMP001', 'Teacher Name', 'teacher@example.com', '0770000000', 'Academic', 'Active', ''],
       ['EMP002', 'Office Staff Name', 'office@example.com', '0770000001', 'Non Academic', 'Transferred', '2026-05-28'],
-      ['EMP003', 'Attachment Staff Name', 'attach@example.com', '0770000002', 'Attachment', 'Temporary attachment to another school', '2026-05-28']
+      ['EMP003', 'Attachment Staff Name', 'attach@example.com', '0770000002', 'Attachment', 'Temporary attachment to another school', '2026-05-28'],
+      ['EMP004', 'Medical Leave Staff Name', 'medical@example.com', '0770000003', 'Academic', 'Medical Leave', '2026-05-28']
     ]
   ]]);
 
