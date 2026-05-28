@@ -1,341 +1,824 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  isFirebaseConfigured, 
-  auth, 
-  db, 
-  onAuthStateChanged,
-  signOut,
-  collection, 
-  getDocs, 
-  doc, 
-  getDoc,
-  query,
-  orderBy
-} from './firebase';
-import Login from './components/Login';
-import PendingApproval from './components/PendingApproval';
-import Dashboard from './components/Dashboard';
-import StaffManager from './components/StaffManager';
-import EventManager from './components/EventManager';
-import ExpenseManager from './components/ExpenseManager';
-import Reports from './components/Reports';
-
-import { 
-  LayoutDashboard, 
-  Users, 
-  Calendar, 
-  Receipt, 
-  FilePieChart, 
-  LogOut,
+import React, { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import {
   AlertTriangle,
+  Banknote,
+  CalendarDays,
+  CheckCircle2,
+  ChevronLeft,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  ImagePlus,
+  LayoutDashboard,
+  LogOut,
+  Mail,
   Menu,
-  X
+  Plus,
+  Receipt,
+  Search,
+  Send,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  Users,
+  X,
+  XCircle
 } from 'lucide-react';
+import {
+  auth,
+  collection,
+  createUserWithEmailAndPassword,
+  db,
+  deleteDoc,
+  doc,
+  firebaseReady,
+  getDoc,
+  getDocs,
+  getDownloadURL,
+  googleProvider,
+  onAuthStateChanged,
+  orderBy,
+  query,
+  ref,
+  setDoc,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  storage,
+  updateDoc,
+  uploadBytes,
+  writeBatch
+} from './firebase';
+import './App.css';
+
+const APP_NAME = 'Kilinochchi Central College - Guild Account Management';
+const TABS = [
+  ['dashboard', LayoutDashboard, 'Dashboard'],
+  ['staff', Users, 'Staff'],
+  ['events', CalendarDays, 'Events'],
+  ['expenses', Receipt, 'Expenses'],
+  ['reports', FileText, 'Reports']
+];
+const EXPENSE_CATEGORIES = [
+  'Food & Refreshments',
+  'Stationery & Printing',
+  'Decoration',
+  'Transport',
+  'Gifts & Awards',
+  'Communication',
+  'Other'
+];
+
+const currency = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`;
+const today = () => new Date().toISOString().slice(0, 10);
+const canManage = (user) => ['admin', 'treasurer'].includes(user?.role);
+
+function parseCsv(text) {
+  return text
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const cells = [];
+      let current = '';
+      let quoted = false;
+      for (const char of line) {
+        if (char === '"') quoted = !quoted;
+        else if (char === ',' && !quoted) {
+          cells.push(current.trim());
+          current = '';
+        } else current += char;
+      }
+      cells.push(current.trim());
+      return cells.map((cell) => cell.replace(/^"|"$/g, ''));
+    });
+}
+
+function normalizeStaffRows(rows) {
+  const headers = rows[0]?.map((h) => String(h || '').toLowerCase().trim()) || [];
+  const find = (name) => headers.findIndex((h) => h.includes(name));
+  const indexes = {
+    employeeId: find('employee'),
+    name: find('name'),
+    email: find('email'),
+    phone: find('phone'),
+    section: find('section')
+  };
+  if (indexes.employeeId < 0 || indexes.name < 0) {
+    throw new Error('Employee ID and Name columns are required.');
+  }
+  return rows.slice(1).map((row) => {
+    const employeeId = String(row[indexes.employeeId] || '').trim();
+    const name = String(row[indexes.name] || '').trim();
+    if (!employeeId || !name) return null;
+    return {
+      id: employeeId,
+      employeeId,
+      name,
+      email: String(row[indexes.email] || '').trim(),
+      phone: String(row[indexes.phone] || '').trim(),
+      section: String(row[indexes.section] || '').trim(),
+      updatedAt: new Date().toISOString()
+    };
+  }).filter(Boolean);
+}
+
+function downloadWorkbook(filename, sheets) {
+  const book = XLSX.utils.book_new();
+  sheets.forEach(([name, rows]) => {
+    const sheet = Array.isArray(rows[0])
+      ? XLSX.utils.aoa_to_sheet(rows)
+      : XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(book, sheet, name.slice(0, 31));
+  });
+  XLSX.writeFile(book, filename);
+}
+
+async function ensureUserProfile(firebaseUser, displayName = '') {
+  const userRef = doc(db, 'users', firebaseUser.uid);
+  const existing = await getDoc(userRef);
+  if (existing.exists()) return existing.data();
+
+  const usersSnapshot = await getDocs(collection(db, 'users'));
+  const isFirstUser = usersSnapshot.empty;
+  const profile = {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: displayName || firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Guild User',
+    role: isFirstUser ? 'admin' : 'member',
+    status: isFirstUser ? 'approved' : 'pending',
+    createdAt: new Date().toISOString()
+  };
+  await setDoc(userRef, profile);
+  return profile;
+}
+
+function EmptyState({ title, text }) {
+  return (
+    <div className="empty">
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal">
+        <header className="modal-header">
+          <h2>{title}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function AuthScreen({ onUser }) {
+  const [mode, setMode] = useState('signin');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const credential = mode === 'signup'
+        ? await createUserWithEmailAndPassword(auth, email, password)
+        : await signInWithEmailAndPassword(auth, email, password);
+      onUser(await ensureUserProfile(credential.user, name));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const google = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const credential = await signInWithPopup(auth, googleProvider);
+      onUser(await ensureUserProfile(credential.user));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="auth-page">
+      <section className="auth-panel">
+        <div className="brand-mark"><ShieldCheck /></div>
+        <h1>{APP_NAME}</h1>
+        <p>Secure guild collections, expenses, approvals, and reports.</p>
+        {error && <div className="alert danger"><AlertTriangle size={16} />{error}</div>}
+        <form onSubmit={submit} className="form-stack">
+          {mode === 'signup' && (
+            <label>Full Name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
+          )}
+          <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+          <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required /></label>
+          <button className="primary-btn" disabled={busy}>{mode === 'signup' ? 'Create Account' : 'Sign In'}</button>
+        </form>
+        <button className="google-btn" onClick={google} disabled={busy}>Continue with Google</button>
+        <button className="link-btn" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>
+          {mode === 'signup' ? 'Already registered? Sign in' : 'New treasurer or admin? Create account'}
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function PendingScreen({ user, onLogout, onRefresh }) {
+  return (
+    <main className="auth-page">
+      <section className="auth-panel">
+        <div className="brand-mark warn"><AlertTriangle /></div>
+        <h1>Approval pending</h1>
+        <p>{user.displayName}, your account is waiting for admin approval. Ask the admin to approve you as treasurer if you need account access.</p>
+        <div className="row-actions">
+          <button className="secondary-btn" onClick={onRefresh}>Check Status</button>
+          <button className="danger-btn" onClick={onLogout}>Sign Out</button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SetupScreen() {
+  return (
+    <main className="auth-page">
+      <section className="auth-panel">
+        <div className="brand-mark danger"><AlertTriangle /></div>
+        <h1>Firebase configuration required</h1>
+        <p>Add the `VITE_FIREBASE_*` variables in `.env` locally and in Vercel before using the system.</p>
+      </section>
+    </main>
+  );
+}
+
+function Dashboard({ user, users, staff, events, contributions, expenses, reload }) {
+  const totals = useMemo(() => {
+    const collected = contributions.filter((c) => c.paid && !c.exempt).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    const spent = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    const unpaid = contributions.filter((c) => !c.paid && !c.exempt).length;
+    return { collected, spent, balance: collected - spent, unpaid };
+  }, [contributions, expenses]);
+
+  const approve = async (target, role) => {
+    await updateDoc(doc(db, 'users', target.uid), { status: 'approved', role });
+    reload();
+  };
+
+  return (
+    <div className="page">
+      <PageTitle title="Dashboard" subtitle={`Welcome, ${user.displayName}`} />
+      <div className="stats">
+        <Stat title="Collected" value={currency(totals.collected)} icon={Banknote} tone="good" />
+        <Stat title="Expenses" value={currency(totals.spent)} icon={Receipt} tone="bad" />
+        <Stat title="Balance" value={currency(totals.balance)} icon={FileSpreadsheet} tone={totals.balance >= 0 ? 'good' : 'bad'} />
+        <Stat title="Unpaid Records" value={totals.unpaid} icon={XCircle} tone="warn" />
+      </div>
+
+      <div className="grid two">
+        <section className="panel">
+          <h2>Recent Events</h2>
+          {events.length === 0 ? <EmptyState title="No events" text="Create an event to start collecting contributions." /> : (
+            <div className="list">
+              {events.slice(0, 6).map((event) => {
+                const eventContributions = contributions.filter((c) => c.eventId === event.id);
+                const collected = eventContributions.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+                const expected = eventContributions.filter((c) => !c.exempt).reduce((sum, c) => sum + Number(event.amount || 0), 0);
+                return (
+                  <div className="list-row" key={event.id}>
+                    <div><strong>{event.name}</strong><span>{event.date}</span></div>
+                    <b>{currency(collected)} / {currency(expected)}</b>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {user.role === 'admin' && (
+          <section className="panel">
+            <h2>User Access</h2>
+            <div className="list">
+              {users.filter((u) => u.uid !== user.uid).map((target) => (
+                <div className="approval-row" key={target.uid}>
+                  <div><strong>{target.displayName}</strong><span>{target.email} | {target.status} | {target.role}</span></div>
+                  <div className="row-actions">
+                    <button className="secondary-btn small" onClick={() => approve(target, 'treasurer')}>Treasurer</button>
+                    <button className="secondary-btn small" onClick={() => approve(target, 'member')}>Member</button>
+                  </div>
+                </div>
+              ))}
+              {users.length <= 1 && <EmptyState title="No users waiting" text="New signups will appear here." />}
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PageTitle({ title, subtitle, actions }) {
+  return (
+    <header className="page-title-row">
+      <div><h1>{title}</h1><p>{subtitle}</p></div>
+      {actions && <div className="row-actions">{actions}</div>}
+    </header>
+  );
+}
+
+function Stat({ title, value, icon: Icon, tone }) {
+  return (
+    <section className={`stat ${tone || ''}`}>
+      <div><span>{title}</span><strong>{value}</strong></div>
+      <Icon size={24} />
+    </section>
+  );
+}
+
+function StaffPage({ user, staff, reload }) {
+  const [modal, setModal] = useState(false);
+  const [bulk, setBulk] = useState(false);
+  const [search, setSearch] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ employeeId: '', name: '', email: '', phone: '', section: '' });
+  const authorized = canManage(user);
+  const visible = staff.filter((s) => [s.employeeId, s.name, s.email, s.section].join(' ').toLowerCase().includes(search.toLowerCase()));
+
+  const open = (item = null) => {
+    setEditing(item);
+    setForm(item || { employeeId: '', name: '', email: '', phone: '', section: '' });
+    setModal(true);
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    const id = editing?.id || form.employeeId.trim();
+    await setDoc(doc(db, 'staff', id), { ...form, id, employeeId: id, updatedAt: new Date().toISOString() });
+    setModal(false);
+    reload();
+  };
+
+  const remove = async (item) => {
+    if (window.confirm(`Delete ${item.name}?`)) {
+      await deleteDoc(doc(db, 'staff', item.id));
+      reload();
+    }
+  };
+
+  const exportStaff = () => downloadWorkbook('kcc-guild-staff.xlsx', [[
+    'Staff',
+    staff.map((s) => ({ 'Employee ID': s.employeeId, Name: s.name, Email: s.email, Phone: s.phone, Section: s.section }))
+  ]]);
+
+  return (
+    <div className="page">
+      <PageTitle
+        title="Staff Details"
+        subtitle="Maintain the staff registry for guild collections."
+        actions={authorized && <>
+          <button className="secondary-btn" onClick={exportStaff}><Download size={16} />Export</button>
+          <button className="secondary-btn" onClick={() => setBulk(true)}><Upload size={16} />Bulk Upload</button>
+          <button className="primary-btn" onClick={() => open()}><Plus size={16} />Add Staff</button>
+        </>}
+      />
+      <SearchBox value={search} onChange={setSearch} placeholder="Search staff..." />
+      <DataTable headers={['ID', 'Name', 'Email', 'Phone', 'Section', authorized ? 'Actions' : '']}>
+        {visible.map((s) => (
+          <tr key={s.id}>
+            <td>{s.employeeId}</td><td><strong>{s.name}</strong></td><td>{s.email}</td><td>{s.phone}</td><td>{s.section}</td>
+            {authorized && <td className="table-actions"><button onClick={() => open(s)}>Edit</button><button onClick={() => remove(s)}>Delete</button></td>}
+          </tr>
+        ))}
+      </DataTable>
+
+      {modal && <Modal title={editing ? 'Edit Staff' : 'Add Staff'} onClose={() => setModal(false)}>
+        <form onSubmit={save} className="modal-body form-grid">
+          <label>Employee ID<input disabled={!!editing} value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} required /></label>
+          <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          <label>Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+          <label>Phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></label>
+          <label>Section<input value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} /></label>
+          <footer><button className="primary-btn">Save Staff</button></footer>
+        </form>
+      </Modal>}
+
+      {bulk && <BulkUploadModal onClose={() => setBulk(false)} reload={reload} />}
+    </div>
+  );
+}
+
+function BulkUploadModal({ onClose, reload }) {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState('');
+
+  const readFile = (file) => {
+    setError('');
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        let rawRows;
+        if (file.name.match(/\.csv$/i)) {
+          rawRows = parseCsv(event.target.result);
+        } else {
+          const workbook = XLSX.read(event.target.result, { type: 'array' });
+          rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: '' });
+        }
+        setRows(normalizeStaffRows(rawRows));
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    file.name.match(/\.csv$/i) ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
+  };
+
+  const upload = async () => {
+    const batch = writeBatch(db);
+    rows.forEach((s) => batch.set(doc(db, 'staff', s.id), s));
+    await batch.commit();
+    reload();
+    onClose();
+  };
+
+  const template = () => downloadWorkbook('kcc-staff-template.xlsx', [[
+    'Template',
+    [['Employee ID', 'Name', 'Email', 'Phone', 'Section'], ['EMP001', 'Teacher Name', 'teacher@example.com', '0770000000', 'Science']]
+  ]]);
+
+  return (
+    <Modal title="Bulk Upload Staff" onClose={onClose}>
+      <div className="modal-body">
+        <p className="muted">Upload `.xlsx`, `.xls`, or `.csv` with Employee ID, Name, Email, Phone, Section.</p>
+        <div className="row-actions">
+          <button className="secondary-btn" onClick={template}><Download size={16} />Template</button>
+          <label className="file-btn"><Upload size={16} />Choose File<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => readFile(e.target.files[0])} /></label>
+        </div>
+        {error && <div className="alert danger">{error}</div>}
+        {rows.length > 0 && <><p>{rows.length} staff records ready.</p><button className="primary-btn" onClick={upload}>Upload to Firebase</button></>}
+      </div>
+    </Modal>
+  );
+}
+
+function SearchBox({ value, onChange, placeholder }) {
+  return <label className="search"><Search size={18} /><input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} /></label>;
+}
+
+function DataTable({ headers, children }) {
+  return (
+    <section className="table-wrap">
+      <table>
+        <thead><tr>{headers.filter(Boolean).map((h) => <th key={h}>{h}</th>)}</tr></thead>
+        <tbody>{children}</tbody>
+      </table>
+    </section>
+  );
+}
+
+function EventsPage({ user, staff, events, contributions, expenses, reload }) {
+  const [modal, setModal] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [form, setForm] = useState({ name: '', date: today(), amount: '', exemptIds: [] });
+  const authorized = canManage(user);
+
+  const create = async (event) => {
+    event.preventDefault();
+    const id = `event_${Date.now()}`;
+    const batch = writeBatch(db);
+    const eventData = { id, name: form.name, date: form.date, amount: Number(form.amount), exemptIds: form.exemptIds, createdAt: new Date().toISOString() };
+    batch.set(doc(db, 'events', id), eventData);
+    staff.forEach((s) => {
+      const exempt = form.exemptIds.includes(s.id);
+      const cid = `${id}_${s.id}`;
+      batch.set(doc(db, 'contributions', cid), { id: cid, eventId: id, staffId: s.id, staffName: s.name, exempt, paid: false, amount: 0, updatedAt: new Date().toISOString() });
+    });
+    await batch.commit();
+    setModal(false);
+    setForm({ name: '', date: today(), amount: '', exemptIds: [] });
+    reload();
+  };
+
+  const remove = async (event) => {
+    if (!window.confirm(`Delete ${event.name} and all linked records?`)) return;
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'events', event.id));
+    contributions.filter((c) => c.eventId === event.id).forEach((c) => batch.delete(doc(db, 'contributions', c.id)));
+    expenses.filter((e) => e.eventId === event.id).forEach((e) => batch.delete(doc(db, 'expenses', e.id)));
+    await batch.commit();
+    reload();
+  };
+
+  if (selected) {
+    return <EventDetail event={selected} staff={staff} contributions={contributions.filter((c) => c.eventId === selected.id)} authorized={authorized} onBack={() => setSelected(null)} reload={reload} />;
+  }
+
+  return (
+    <div className="page">
+      <PageTitle title="Events & Contributions" subtitle="Create events, exempt organizers, and record staff payments." actions={authorized && <button className="primary-btn" onClick={() => setModal(true)}><Plus size={16} />New Event</button>} />
+      <div className="cards">
+        {events.map((event) => {
+          const eventRows = contributions.filter((c) => c.eventId === event.id);
+          const collected = eventRows.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+          const expected = eventRows.filter((c) => !c.exempt).length * Number(event.amount || 0);
+          const unpaid = eventRows.filter((c) => !c.exempt && !c.paid).length;
+          return (
+            <section className="event-card" key={event.id}>
+              <header><div><h2>{event.name}</h2><p>{event.date}</p></div>{authorized && <button className="icon-btn danger" onClick={() => remove(event)}><Trash2 size={16} /></button>}</header>
+              <div className="event-metrics"><span>Collected <b>{currency(collected)}</b></span><span>Expected <b>{currency(expected)}</b></span><span>Unpaid <b>{unpaid}</b></span></div>
+              <button className="secondary-btn" onClick={() => setSelected(event)}>Manage Payments</button>
+            </section>
+          );
+        })}
+      </div>
+      {events.length === 0 && <EmptyState title="No events yet" text="Create your first guild event to start tracking contributions." />}
+      {modal && <Modal title="Create Event" onClose={() => setModal(false)}>
+        <form onSubmit={create} className="modal-body form-stack">
+          <label>Event Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          <label>Event Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
+          <label>Contribution Per Staff<input type="number" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
+          <div><strong>Exempt event staff</strong><div className="check-grid">
+            {staff.map((s) => <label key={s.id}><input type="checkbox" checked={form.exemptIds.includes(s.id)} onChange={(e) => setForm({ ...form, exemptIds: e.target.checked ? [...form.exemptIds, s.id] : form.exemptIds.filter((id) => id !== s.id) })} />{s.name}</label>)}
+          </div></div>
+          <button className="primary-btn">Create Event</button>
+        </form>
+      </Modal>}
+    </div>
+  );
+}
+
+function EventDetail({ event, staff, contributions, authorized, onBack, reload }) {
+  const [search, setSearch] = useState('');
+  const visible = contributions.filter((c) => c.staffName.toLowerCase().includes(search.toLowerCase()));
+  const collected = contributions.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const expected = contributions.filter((c) => !c.exempt).length * Number(event.amount || 0);
+
+  const updateContribution = async (item, changes) => {
+    await updateDoc(doc(db, 'contributions', item.id), { ...changes, updatedAt: new Date().toISOString() });
+    reload();
+  };
+
+  return (
+    <div className="page">
+      <button className="secondary-btn" onClick={onBack}><ChevronLeft size={16} />Back</button>
+      <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} />
+      <div className="stats">
+        <Stat title="Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
+        <Stat title="Outstanding" value={currency(expected - collected)} icon={XCircle} tone="bad" />
+      </div>
+      <SearchBox value={search} onChange={setSearch} placeholder="Search contribution records..." />
+      <DataTable headers={['Staff', 'Status', 'Amount', authorized ? 'Action' : '']}>
+        {visible.map((c) => {
+          const s = staff.find((item) => item.id === c.staffId);
+          return <tr key={c.id}>
+            <td><strong>{c.staffName}</strong><span className="subtext">{s?.employeeId}</span></td>
+            <td>{c.exempt ? <span className="badge warn">Exempt</span> : c.paid ? <span className="badge good">Paid</span> : <span className="badge bad">Unpaid</span>}</td>
+            <td><input disabled={!authorized || c.exempt} type="number" value={c.amount || ''} onChange={(e) => updateContribution(c, { amount: Number(e.target.value), paid: Number(e.target.value) > 0 })} /></td>
+            {authorized && <td><button className="secondary-btn small" disabled={c.exempt} onClick={() => updateContribution(c, { paid: !c.paid, amount: c.paid ? 0 : Number(event.amount || 0) })}>{c.paid ? 'Mark Unpaid' : 'Mark Paid'}</button></td>}
+          </tr>;
+        })}
+      </DataTable>
+    </div>
+  );
+}
+
+function ExpensesPage({ user, events, expenses, contributions, reload }) {
+  const [modal, setModal] = useState(false);
+  const [eventFilter, setEventFilter] = useState('');
+  const [preview, setPreview] = useState(null);
+  const authorized = canManage(user);
+  const visible = eventFilter ? expenses.filter((e) => e.eventId === eventFilter) : expenses;
+  const selectedEvent = events.find((e) => e.id === eventFilter);
+  const collected = contributions.filter((c) => c.eventId === eventFilter && c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const spent = expenses.filter((e) => e.eventId === eventFilter).reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const remove = async (expense) => {
+    if (window.confirm('Delete this expense?')) {
+      await deleteDoc(doc(db, 'expenses', expense.id));
+      reload();
+    }
+  };
+
+  return (
+    <div className="page">
+      <PageTitle title="Expenses" subtitle="Record spending with bill photos and event balances." actions={authorized && <button className="primary-btn" onClick={() => setModal(true)}><Plus size={16} />Add Expense</button>} />
+      <label className="filter">Event Filter<select value={eventFilter} onChange={(e) => setEventFilter(e.target.value)}><option value="">All events</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+      {selectedEvent && <div className="stats"><Stat title="Collected" value={currency(collected)} icon={Banknote} tone="good" /><Stat title="Spent" value={currency(spent)} icon={Receipt} tone="bad" /><Stat title="Balance" value={currency(collected - spent)} icon={FileSpreadsheet} tone={collected - spent >= 0 ? 'good' : 'bad'} /></div>}
+      <DataTable headers={['Event', 'Category', 'Date', 'Description', 'Bill', 'Amount', authorized ? 'Actions' : '']}>
+        {visible.map((e) => <tr key={e.id}><td>{e.eventName}</td><td>{e.category}</td><td>{e.date}</td><td>{e.description}</td><td>{e.billUrl ? <button className="link-btn" onClick={() => setPreview(e.billUrl)}>View</button> : '-'}</td><td><strong>{currency(e.amount)}</strong></td>{authorized && <td><button className="danger-btn small" onClick={() => remove(e)}>Delete</button></td>}</tr>)}
+      </DataTable>
+      {modal && <ExpenseModal events={events} onClose={() => setModal(false)} reload={reload} />}
+      {preview && <Modal title="Bill Photo" onClose={() => setPreview(null)}><div className="modal-body"><img className="bill-preview" src={preview} alt="Bill" /></div></Modal>}
+    </div>
+  );
+}
+
+function ExpenseModal({ events, onClose, reload }) {
+  const [form, setForm] = useState({ eventId: '', category: EXPENSE_CATEGORIES[0], amount: '', date: today(), description: '', file: null });
+  const [busy, setBusy] = useState(false);
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const id = `expense_${Date.now()}`;
+      const eventItem = events.find((e) => e.id === form.eventId);
+      let billUrl = '';
+      if (form.file) {
+        const billRef = ref(storage, `bills/${form.eventId}/${id}-${form.file.name}`);
+        const uploaded = await uploadBytes(billRef, form.file);
+        billUrl = await getDownloadURL(uploaded.ref);
+      }
+      await setDoc(doc(db, 'expenses', id), { id, eventId: form.eventId, eventName: eventItem?.name || '', category: form.category, amount: Number(form.amount), date: form.date, description: form.description, billUrl, createdAt: new Date().toISOString() });
+      reload();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Modal title="Add Expense" onClose={onClose}><form onSubmit={save} className="modal-body form-stack">
+    <label>Event<select value={form.eventId} onChange={(e) => setForm({ ...form, eventId: e.target.value })} required><option value="">Select event</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+    <label>Category<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></label>
+    <label>Amount<input type="number" min="1" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
+    <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
+    <label>Description<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required /></label>
+    <label className="file-field"><ImagePlus size={18} />Bill Photo<input type="file" accept="image/*" onChange={(e) => setForm({ ...form, file: e.target.files[0] })} /></label>
+    <button className="primary-btn" disabled={busy}>{busy ? 'Saving...' : 'Save Expense'}</button>
+  </form></Modal>;
+}
+
+function ReportsPage({ staff, events, contributions, expenses }) {
+  const [mode, setMode] = useState('event');
+  const [eventId, setEventId] = useState('');
+  const [range, setRange] = useState({ start: '', end: '' });
+  const report = useMemo(() => buildReport({ mode, eventId, range, staff, events, contributions, expenses }), [mode, eventId, range, staff, events, contributions, expenses]);
+
+  const shareText = () => encodeURIComponent(report.summaryText || 'No report selected.');
+  const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
+  const exportPdf = () => {
+    if (!report.rows.length) return;
+    const pdf = new jsPDF();
+    pdf.setFontSize(14);
+    pdf.text(APP_NAME, 14, 14);
+    pdf.setFontSize(10);
+    pdf.text(report.title, 14, 22);
+    autoTable(pdf, { startY: 30, head: [report.headers], body: report.rows, styles: { fontSize: 8 } });
+    pdf.save(report.filename);
+  };
+
+  return (
+    <div className="page">
+      <PageTitle title="Reports" subtitle="Event-wise and custom range financial reports." />
+      <div className="tabs"><button className={mode === 'event' ? 'active' : ''} onClick={() => setMode('event')}>Single Event</button><button className={mode === 'range' ? 'active' : ''} onClick={() => setMode('range')}>Custom Range</button></div>
+      <section className="panel report-controls">
+        {mode === 'event' ? <label>Event<select value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select event</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label> : <>
+          <label>Start<input type="date" value={range.start} onChange={(e) => setRange({ ...range, start: e.target.value })} /></label>
+          <label>End<input type="date" value={range.end} onChange={(e) => setRange({ ...range, end: e.target.value })} /></label>
+        </>}
+        <div className="row-actions">
+          <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
+          <button className="secondary-btn" disabled={!report.rows.length} onClick={exportPdf}><FileText size={16} />PDF</button>
+          <a className="secondary-btn" href={`mailto:?subject=${encodeURIComponent(report.title)}&body=${shareText()}`}><Mail size={16} />Email</a>
+          <a className="secondary-btn" target="_blank" rel="noreferrer" href={`https://api.whatsapp.com/send?text=${shareText()}`}><Send size={16} />WhatsApp</a>
+        </div>
+      </section>
+      {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
+    </div>
+  );
+}
+
+function buildReport({ mode, eventId, range, staff, events, contributions, expenses }) {
+  if (mode === 'event') {
+    const event = events.find((e) => e.id === eventId);
+    if (!event) return { title: 'Event Report', headers: [], rows: [], sheets: [], filename: 'event-report.pdf' };
+    const rows = staff.filter((s) => !event.exemptIds?.includes(s.id)).map((s) => {
+      const c = contributions.find((item) => item.eventId === event.id && item.staffId === s.id);
+      return [s.employeeId, s.name, c?.paid ? 'Paid' : 'Unpaid', currency(c?.amount || 0), c?.paid ? '-' : currency(event.amount)];
+    });
+    const collected = contributions.filter((c) => c.eventId === event.id && c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
+    const spent = expenses.filter((e) => e.eventId === event.id).reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    return {
+      title: `${event.name} Report`,
+      headers: ['ID', 'Staff', 'Status', 'Paid', 'Due'],
+      rows,
+      filename: `${event.name.replace(/\s+/g, '-')}-report.pdf`,
+      summaryText: `${APP_NAME}\n${event.name}\nCollected: ${currency(collected)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}`,
+      sheets: [['Contributions', rows.map((r) => ({ ID: r[0], Staff: r[1], Status: r[2], Paid: r[3], Due: r[4] }))]]
+    };
+  }
+
+  const selectedEvents = events.filter((e) => range.start && range.end && e.date >= range.start && e.date <= range.end);
+  if (!selectedEvents.length) return { title: 'Range Report', headers: [], rows: [], sheets: [], filename: 'range-report.pdf' };
+  const rows = staff.map((s) => {
+    let paid = 0;
+    let due = 0;
+    selectedEvents.forEach((e) => {
+      if (e.exemptIds?.includes(s.id)) return;
+      const c = contributions.find((item) => item.eventId === e.id && item.staffId === s.id);
+      if (c?.paid) paid += Number(c.amount || 0);
+      else due += Number(e.amount || 0);
+    });
+    return [s.employeeId, s.name, currency(paid), currency(due)];
+  });
+  const collected = selectedEvents.reduce((sum, e) => sum + contributions.filter((c) => c.eventId === e.id && c.paid).reduce((inner, c) => inner + Number(c.amount || 0), 0), 0);
+  const spent = selectedEvents.reduce((sum, e) => sum + expenses.filter((x) => x.eventId === e.id).reduce((inner, x) => inner + Number(x.amount || 0), 0), 0);
+  return {
+    title: `Range Report ${range.start} to ${range.end}`,
+    headers: ['ID', 'Staff', 'Total Paid', 'Total Due'],
+    rows,
+    filename: `range-${range.start}-to-${range.end}.pdf`,
+    summaryText: `${APP_NAME}\n${range.start} to ${range.end}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}`,
+    sheets: [['Range Summary', rows.map((r) => ({ ID: r[0], Staff: r[1], Paid: r[2], Due: r[3] }))]]
+  };
+}
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authChecking, setAuthChecking] = useState(true);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  
-  // Application Data States
-  const [staffList, setStaffList] = useState([]);
-  const [eventsList, setEventsList] = useState([]);
-  const [contributionsList, setContributionsList] = useState([]);
-  const [expensesList, setExpensesList] = useState([]);
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [tab, setTab] = useState('dashboard');
+  const [menu, setMenu] = useState(false);
+  const [data, setData] = useState({ users: [], staff: [], events: [], contributions: [], expenses: [] });
 
-  // Mobile Drawer State
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const logout = async () => {
+    await signOut(auth);
+    setUser(null);
+  };
 
-  // ----------------------------------------------------
-  // AUTHENTICATION SYNC
-  // ----------------------------------------------------
+  const refreshUser = async () => {
+    const current = auth.currentUser;
+    if (!current) return;
+    const profile = await getDoc(doc(db, 'users', current.uid));
+    if (profile.exists()) setUser(profile.data());
+  };
+
+  const loadData = async () => {
+    if (!user || user.status !== 'approved') return;
+    const [usersSnap, staffSnap, eventsSnap, contributionsSnap, expensesSnap] = await Promise.all([
+      getDocs(collection(db, 'users')),
+      getDocs(query(collection(db, 'staff'), orderBy('name'))),
+      getDocs(query(collection(db, 'events'), orderBy('date', 'desc'))),
+      getDocs(collection(db, 'contributions')),
+      getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc')))
+    ]);
+    const unpack = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+    setData({ users: unpack(usersSnap), staff: unpack(staffSnap), events: unpack(eventsSnap), contributions: unpack(contributionsSnap), expenses: unpack(expensesSnap) });
+  };
+
   useEffect(() => {
-    let unsubscribe = () => {};
-    
-    if (isFirebaseConfigured) {
-      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser) {
-          try {
-            // Get user role/status details from Firestore
-            const userDocRef = doc(db, 'users', firebaseUser.uid);
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) {
-              setCurrentUser(userDoc.data());
-            } else {
-              // User signed in but profile doc not created yet
-              setCurrentUser({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName || firebaseUser.email.split('@')[0],
-                role: 'regular',
-                status: 'pending'
-              });
-            }
-          } catch (err) {
-            console.error("Auth state profile fetch error:", err);
-          }
-        } else {
-          setCurrentUser(null);
-        }
-        setAuthChecking(false);
-      });
-    } else {
-      setAuthChecking(false);
+    if (!firebaseReady) {
+      setChecking(false);
+      return;
     }
-
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser ? await ensureUserProfile(firebaseUser) : null);
+      setChecking(false);
+    });
   }, []);
 
-  const handleLogout = async () => {
-    if (isFirebaseConfigured) {
-      await signOut(auth);
-    }
-    setCurrentUser(null);
-    setActiveTab('dashboard');
-  };
-
-  // ----------------------------------------------------
-  // DATABASE SYNCHRONIZATION
-  // ----------------------------------------------------
-  const fetchData = async () => {
-    if (!currentUser || currentUser.status !== 'approved') return;
-
-    try {
-      if (isFirebaseConfigured) {
-        // 1. Fetch Staff Registry
-        const staffSnapshot = await getDocs(query(collection(db, 'staff'), orderBy('name')));
-        const staff = [];
-        staffSnapshot.forEach(doc => staff.push({ id: doc.id, ...doc.data() }));
-        setStaffList(staff);
-
-        // 2. Fetch Events
-        const eventsSnapshot = await getDocs(query(collection(db, 'events'), orderBy('date', 'desc')));
-        const events = [];
-        eventsSnapshot.forEach(doc => events.push({ id: doc.id, ...doc.data() }));
-        setEventsList(events);
-
-        // 3. Fetch Contributions
-        const contributionsSnapshot = await getDocs(collection(db, 'contributions'));
-        const contributions = [];
-        contributionsSnapshot.forEach(doc => contributions.push({ id: doc.id, ...doc.data() }));
-        setContributionsList(contributions);
-
-        // 4. Fetch Expenses
-        const expensesSnapshot = await getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc')));
-        const expenses = [];
-        expensesSnapshot.forEach(doc => expenses.push({ id: doc.id, ...doc.data() }));
-        setExpensesList(expenses);
-      }
-    } catch (err) {
-      console.error("Database sync failed:", err);
-    }
-  };
-
   useEffect(() => {
-    fetchData();
-  }, [currentUser]);
+    loadData();
+  }, [user]);
 
-  if (authChecking) {
-    return (
-      <div style={{ display: 'flex', width: '100vw', height: '100vh', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)', fontFamily: 'var(--font-heading)' }}>
-        <div style={{ textAlign: 'center' }}>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '8px' }}>Verifying Guild Credentials</h2>
-          <p style={{ color: 'var(--text-muted)' }}>Connecting to Guild secure servers...</p>
-        </div>
-      </div>
-    );
-  }
+  if (!firebaseReady) return <SetupScreen />;
+  if (checking) return <main className="auth-page"><section className="auth-panel"><h1>Loading...</h1></section></main>;
+  if (!user) return <AuthScreen onUser={setUser} />;
+  if (user.status !== 'approved') return <PendingScreen user={user} onLogout={logout} onRefresh={refreshUser} />;
 
-  if (!isFirebaseConfigured) {
-    return (
-      <div className="auth-wrapper">
-        <div className="auth-card">
-          <div className="auth-logo-section">
-            <div className="auth-logo">
-              <AlertTriangle size={28} />
-            </div>
-            <h1 className="auth-title">Firebase Setup Required</h1>
-            <p className="auth-subtitle">
-              Kilinochchi Central College - Guild Account Management needs live Firebase credentials before sign in, data entry, reports, or deployment.
-            </p>
-          </div>
-          <div className="alert-banner">
-            <AlertTriangle size={16} />
-            <span>Add the Vite Firebase environment variables in `.env` locally and in Vercel Project Settings.</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const pages = {
+    dashboard: <Dashboard user={user} {...data} reload={loadData} />,
+    staff: <StaffPage user={user} staff={data.staff} reload={loadData} />,
+    events: <EventsPage user={user} {...data} reload={loadData} />,
+    expenses: <ExpensesPage user={user} events={data.events} expenses={data.expenses} contributions={data.contributions} reload={loadData} />,
+    reports: <ReportsPage {...data} />
+  };
 
-  // Auth Card Page
-  if (!currentUser) {
-    return <Login onAuthSuccess={(user) => setCurrentUser(user)} />;
-  }
-
-  // Pending Status Screen
-  if (currentUser.status === 'pending') {
-    return (
-      <PendingApproval 
-        user={currentUser} 
-        onLogout={handleLogout} 
-        onStatusRefresh={(updatedUser) => setCurrentUser(updatedUser)} 
-      />
-    );
-  }
-
-  // Main Dashboard Shell
   return (
-    <div className="app-container">
-      {/* Mobile Header Bar */}
-      <header className="mobile-header-bar">
-        <button 
-          className="mobile-menu-toggle" 
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          aria-label="Toggle Navigation Menu"
-        >
-          <Menu size={24} />
-        </button>
-        <span className="mobile-header-title">KCC Guild Accounts</span>
-        <div style={{ width: 24 }}></div> {/* Spacer */}
+    <div className="app-shell">
+      <header className="mobile-top">
+        <button className="icon-btn" onClick={() => setMenu(true)}><Menu /></button>
+        <strong>KCC Guild Accounts</strong>
       </header>
-
-      {/* Sidebar Backdrop Overlay */}
-      {mobileMenuOpen && (
-        <div 
-          className="sidebar-overlay visible" 
-          onClick={() => setMobileMenuOpen(false)}
-        ></div>
-      )}
-
-      {/* Sidebar Navigation */}
-      <aside className={`sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-header" style={{ position: 'relative' }}>
-          <div className="school-logo">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ width: 22, height: 22 }}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-          </div>
-          <div>
-            <h2 className="sidebar-title">Kilinochchi Central</h2>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Guild Account Manager</p>
-          </div>
-          
-          {/* Close button in mobile drawer */}
-          <button 
-            className="mobile-menu-close-btn"
-            onClick={() => setMobileMenuOpen(false)}
-            aria-label="Close Navigation Menu"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <nav className="sidebar-menu">
-          <div 
-            onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); fetchData(); }} 
-            className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-          >
-            <LayoutDashboard size={18} />
-            <span>Dashboard</span>
-          </div>
-          <div 
-            onClick={() => { setActiveTab('staff'); setMobileMenuOpen(false); fetchData(); }} 
-            className={`sidebar-item ${activeTab === 'staff' ? 'active' : ''}`}
-          >
-            <Users size={18} />
-            <span>Staff Details</span>
-          </div>
-          <div 
-            onClick={() => { setActiveTab('events'); setMobileMenuOpen(false); fetchData(); }} 
-            className={`sidebar-item ${activeTab === 'events' ? 'active' : ''}`}
-          >
-            <Calendar size={18} />
-            <span>Events & Dues</span>
-          </div>
-          <div 
-            onClick={() => { setActiveTab('expenses'); setMobileMenuOpen(false); fetchData(); }} 
-            className={`sidebar-item ${activeTab === 'expenses' ? 'active' : ''}`}
-          >
-            <Receipt size={18} />
-            <span>Expenses Log</span>
-          </div>
-          <div 
-            onClick={() => { setActiveTab('reports'); setMobileMenuOpen(false); fetchData(); }} 
-            className={`sidebar-item ${activeTab === 'reports' ? 'active' : ''}`}
-          >
-            <FilePieChart size={18} />
-            <span>Financial Reports</span>
-          </div>
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="user-avatar">
-              {currentUser.displayName.charAt(0).toUpperCase()}
-            </div>
-            <div className="user-info">
-              <span className="user-name">{currentUser.displayName}</span>
-              <span className="user-role">{currentUser.role}</span>
-            </div>
-          </div>
-          <button onClick={handleLogout} className="btn btn-secondary" style={{ width: '100%', gap: '8px' }}>
-            <LogOut size={16} />
-            Sign Out
-          </button>
-        </div>
+      <aside className={menu ? 'sidebar open' : 'sidebar'}>
+        <div className="side-brand"><ShieldCheck /><div><strong>KCC Guild</strong><span>Account Management</span></div><button className="icon-btn mobile-only" onClick={() => setMenu(false)}><X /></button></div>
+        <nav>{TABS.map(([id, Icon, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setMenu(false); }}><Icon size={18} />{label}</button>)}</nav>
+        <footer><div className="user-card"><strong>{user.displayName}</strong><span>{user.role}</span></div><button className="secondary-btn" onClick={logout}><LogOut size={16} />Sign Out</button></footer>
       </aside>
-
-      {/* Main Content Area */}
-      <main className="main-content">
-        {/* Tab Routers */}
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            currentUser={currentUser} 
-            staffList={staffList} 
-            eventsList={eventsList}
-            expensesList={expensesList}
-            contributionsList={contributionsList}
-            onUpdateUsers={fetchData}
-          />
-        )}
-
-        {activeTab === 'staff' && (
-          <StaffManager 
-            currentUser={currentUser} 
-            staffList={staffList} 
-            onRefreshStaff={fetchData}
-          />
-        )}
-
-        {activeTab === 'events' && (
-          <EventManager 
-            currentUser={currentUser} 
-            staffList={staffList} 
-            eventsList={eventsList}
-            contributionsList={contributionsList}
-            expensesList={expensesList}
-            onRefreshEvents={fetchData}
-          />
-        )}
-
-        {activeTab === 'expenses' && (
-          <ExpenseManager 
-            currentUser={currentUser} 
-            eventsList={eventsList} 
-            expensesList={expensesList}
-            contributionsList={contributionsList}
-            onRefreshExpenses={fetchData}
-          />
-        )}
-
-        {activeTab === 'reports' && (
-          <Reports 
-            staffList={staffList} 
-            eventsList={eventsList}
-            contributionsList={contributionsList}
-            expensesList={expensesList}
-          />
-        )}
-      </main>
+      {menu && <div className="scrim" onClick={() => setMenu(false)} />}
+      <main className="content">{pages[tab]}</main>
     </div>
   );
 }

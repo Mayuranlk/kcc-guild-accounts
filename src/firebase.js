@@ -1,36 +1,30 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  signInWithPopup, 
+import { initializeApp } from 'firebase/app';
+import {
   GoogleAuthProvider,
-  onAuthStateChanged
+  createUserWithEmailAndPassword,
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
   orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
   writeBatch
 } from 'firebase/firestore';
-import { 
-  getStorage, 
-  ref, 
-  uploadString, 
-  getDownloadURL 
-} from 'firebase/storage';
+import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 
-// Firebase configuration from environment variables
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -40,63 +34,33 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Check if credentials are provided
-const isFirebaseConfigured = !!(
-  firebaseConfig.apiKey &&
-  firebaseConfig.authDomain &&
-  firebaseConfig.projectId &&
-  firebaseConfig.storageBucket &&
-  firebaseConfig.messagingSenderId &&
-  firebaseConfig.appId &&
-  !firebaseConfig.apiKey.includes('your_') &&
-  !firebaseConfig.apiKey.includes('YOUR_')
-);
+export const firebaseReady = Object.values(firebaseConfig).every(Boolean);
 
-let app;
-let auth;
-let db;
-let storage;
-let googleProvider;
+export const app = firebaseReady ? initializeApp(firebaseConfig) : null;
+export const auth = firebaseReady ? getAuth(app) : null;
+export const db = firebaseReady ? getFirestore(app) : null;
+export const storage = firebaseReady ? getStorage(app) : null;
+export const googleProvider = new GoogleAuthProvider();
 
-if (isFirebaseConfigured) {
-  try {
-    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-    auth = getAuth(app);
-    db = getFirestore(app);
-    storage = getStorage(app);
-    googleProvider = new GoogleAuthProvider();
-  } catch (error) {
-    console.error("Firebase initialization failed:", error);
-  }
-}
-
-export { 
-  app, 
-  auth, 
-  db, 
-  storage, 
-  googleProvider, 
-  isFirebaseConfigured,
-  // Re-export common functions for clean components
+export {
+  addDoc,
   collection,
+  createUserWithEmailAndPassword,
+  deleteDoc,
   doc,
-  setDoc,
   getDoc,
   getDocs,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  writeBatch,
-  ref,
-  uploadString,
   getDownloadURL,
+  onAuthStateChanged,
+  orderBy,
+  query,
+  ref,
+  setDoc,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
   signInWithPopup,
-  GoogleAuthProvider,
-  onAuthStateChanged
+  signOut,
+  updateDoc,
+  uploadBytes,
+  where,
+  writeBatch
 };
