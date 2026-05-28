@@ -290,13 +290,14 @@ function SetupScreen() {
   );
 }
 
-function Dashboard({ user, users, staff, events, contributions, expenses, reload }) {
+function Dashboard({ user, users, staff, events, contributions, expenses, handovers, reload }) {
   const totals = useMemo(() => {
     const collected = contributions.filter((c) => c.paid && !c.exempt).reduce((sum, c) => sum + Number(c.amount || 0), 0);
     const spent = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    const handedOver = handovers.reduce((sum, h) => sum + Number(h.amount || 0), 0);
     const unpaid = contributions.filter((c) => !c.paid && !c.exempt).length;
-    return { collected, spent, balance: collected - spent, unpaid };
-  }, [contributions, expenses]);
+    return { collected, spent, handedOver, balance: collected - handedOver, unpaid };
+  }, [contributions, expenses, handovers]);
 
   const approve = async (target, role) => {
     await updateDoc(doc(db, 'users', target.uid), { status: 'approved', role });
@@ -308,7 +309,7 @@ function Dashboard({ user, users, staff, events, contributions, expenses, reload
       <PageTitle title="Dashboard" subtitle={`Welcome, ${user.displayName}`} />
       <div className="stats">
         <Stat title="Collected" value={currency(totals.collected)} icon={Banknote} tone="good" />
-        <Stat title="Expenses" value={currency(totals.spent)} icon={Receipt} tone="bad" />
+        <Stat title="Handed Over" value={currency(totals.handedOver)} icon={Receipt} tone="warn" />
         <Stat title="Balance" value={currency(totals.balance)} icon={FileSpreadsheet} tone={totals.balance >= 0 ? 'good' : 'bad'} />
         <Stat title="Unpaid Records" value={totals.unpaid} icon={XCircle} tone="warn" />
       </div>
@@ -541,7 +542,7 @@ function DataTable({ headers, children }) {
   );
 }
 
-function EventsPage({ user, staff, events, contributions, expenses, reload }) {
+function EventsPage({ user, staff, events, contributions, expenses, handovers, reload }) {
   const [modal, setModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -615,12 +616,13 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
     batch.delete(doc(db, 'events', event.id));
     contributions.filter((c) => c.eventId === event.id).forEach((c) => batch.delete(doc(db, 'contributions', c.id)));
     expenses.filter((e) => e.eventId === event.id).forEach((e) => batch.delete(doc(db, 'expenses', e.id)));
+    handovers.filter((h) => h.eventId === event.id).forEach((h) => batch.delete(doc(db, 'handovers', h.id)));
     await batch.commit();
     reload();
   };
 
   if (selected) {
-    return <EventDetail event={selected} staff={staff} contributions={contributions.filter((c) => c.eventId === selected.id)} authorized={authorized} onBack={() => setSelected(null)} reload={reload} />;
+    return <EventDetail event={selected} staff={staff} contributions={contributions.filter((c) => c.eventId === selected.id)} expenses={expenses.filter((e) => e.eventId === selected.id)} handovers={handovers.filter((h) => h.eventId === selected.id)} authorized={authorized} onBack={() => setSelected(null)} reload={reload} />;
   }
 
   return (
@@ -632,10 +634,11 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
           const collected = eventRows.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
           const expected = eventRows.filter((c) => !c.exempt).length * Number(event.amount || 0);
           const unpaid = eventRows.filter((c) => !c.exempt && !c.paid).length;
+          const handedOver = handovers.filter((h) => h.eventId === event.id).reduce((sum, h) => sum + Number(h.amount || 0), 0);
           return (
             <section className="event-card" key={event.id}>
               <header><div><h2>{event.name}</h2><p>{event.date}</p></div>{authorized && <button className="icon-btn danger" onClick={() => remove(event)}><Trash2 size={16} /></button>}</header>
-              <div className="event-metrics"><span>Collected <b>{currency(collected)}</b></span><span>Expected <b>{currency(expected)}</b></span><span>Unpaid <b>{unpaid}</b></span></div>
+              <div className="event-metrics"><span>Collected <b>{currency(collected)}</b></span><span>Handed Over <b>{currency(handedOver)}</b></span><span>Balance <b>{currency(collected - handedOver)}</b></span><span>Unpaid <b>{unpaid}</b></span></div>
               <div className="row-actions">
                 {authorized && <button className="secondary-btn" onClick={() => openEditEvent(event)}>Edit Event</button>}
                 <button className="secondary-btn" onClick={() => setSelected(event)}>Manage Payments</button>
@@ -660,11 +663,16 @@ function EventsPage({ user, staff, events, contributions, expenses, reload }) {
   );
 }
 
-function EventDetail({ event, staff, contributions, authorized, onBack, reload }) {
+function EventDetail({ event, staff, contributions, expenses, handovers, authorized, onBack, reload }) {
   const [search, setSearch] = useState('');
+  const [handoverForm, setHandoverForm] = useState({ amount: '', date: today(), receiver: '', note: '' });
   const visible = contributions.filter((c) => c.staffName.toLowerCase().includes(search.toLowerCase()));
   const collected = contributions.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const expected = contributions.filter((c) => !c.exempt).length * Number(event.amount || 0);
+  const handedOver = handovers.reduce((sum, h) => sum + Number(h.amount || 0), 0);
+  const spent = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const cashBalance = collected - handedOver;
+  const eventBalance = handedOver - spent;
   const missingActiveStaff = staff
     .filter((person) => (person.serviceStatus || 'Active') === 'Active')
     .filter((person) => !contributions.some((item) => item.staffId === person.id))
@@ -700,14 +708,62 @@ function EventDetail({ event, staff, contributions, authorized, onBack, reload }
     alert(`${missingActiveStaff.length} missing staff added to this event.`);
   };
 
+  const saveHandover = async (submitEvent) => {
+    submitEvent.preventDefault();
+    const id = `handover_${Date.now()}`;
+    await setDoc(doc(db, 'handovers', id), {
+      id,
+      eventId: event.id,
+      eventName: event.name,
+      amount: Number(handoverForm.amount),
+      date: handoverForm.date,
+      receiver: handoverForm.receiver.trim(),
+      note: handoverForm.note.trim(),
+      createdAt: new Date().toISOString()
+    });
+    setHandoverForm({ amount: '', date: today(), receiver: '', note: '' });
+    reload();
+  };
+
+  const deleteHandover = async (handover) => {
+    if (!window.confirm('Delete this handed over amount?')) return;
+    await deleteDoc(doc(db, 'handovers', handover.id));
+    reload();
+  };
+
   return (
     <div className="page">
       <button className="secondary-btn" onClick={onBack}><ChevronLeft size={16} />Back</button>
       <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} actions={authorized && <button className="secondary-btn" onClick={syncMissingStaff}>Add Missing Staff ({missingActiveStaff.length})</button>} />
       <div className="stats">
         <Stat title="Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
-        <Stat title="Outstanding" value={currency(expected - collected)} icon={XCircle} tone="bad" />
+        <Stat title="Handed Over" value={currency(handedOver)} icon={Banknote} tone="warn" />
+        <Stat title="Guild Cash Balance" value={currency(cashBalance)} icon={FileSpreadsheet} tone={cashBalance >= 0 ? 'good' : 'bad'} />
+        <Stat title="Event Balance" value={currency(eventBalance)} icon={Receipt} tone={eventBalance >= 0 ? 'good' : 'bad'} />
       </div>
+      <section className="panel">
+        <h2>Amount Handed Over to Event</h2>
+        {authorized && (
+          <form className="handover-form" onSubmit={saveHandover}>
+            <label>Amount<input type="number" min="1" value={handoverForm.amount} onChange={(e) => setHandoverForm({ ...handoverForm, amount: e.target.value })} required /></label>
+            <label>Date<input type="date" value={handoverForm.date} onChange={(e) => setHandoverForm({ ...handoverForm, date: e.target.value })} required /></label>
+            <label>Receiver<input value={handoverForm.receiver} onChange={(e) => setHandoverForm({ ...handoverForm, receiver: e.target.value })} placeholder="Event treasurer / organizer" required /></label>
+            <label>Note<input value={handoverForm.note} onChange={(e) => setHandoverForm({ ...handoverForm, note: e.target.value })} placeholder="Optional" /></label>
+            <button className="primary-btn">Add Handover</button>
+          </form>
+        )}
+        <DataTable headers={['Date', 'Receiver', 'Note', 'Amount', authorized ? 'Action' : '']}>
+          {handovers.map((handover) => (
+            <tr key={handover.id}>
+              <td>{handover.date}</td>
+              <td>{handover.receiver}</td>
+              <td>{handover.note || '-'}</td>
+              <td className="money-cell"><strong>{currency(handover.amount)}</strong></td>
+              {authorized && <td><button className="danger-btn small" onClick={() => deleteHandover(handover)}>Delete</button></td>}
+            </tr>
+          ))}
+        </DataTable>
+      </section>
       <SearchBox value={search} onChange={setSearch} placeholder="Search contribution records..." />
       <DataTable headers={['Staff', 'Status', 'Amount', authorized ? 'Action' : '']}>
         {visible.map((c) => {
@@ -724,7 +780,7 @@ function EventDetail({ event, staff, contributions, authorized, onBack, reload }
   );
 }
 
-function ExpensesPage({ user, events, expenses, contributions, reload }) {
+function ExpensesPage({ user, events, expenses, contributions, handovers, reload }) {
   const [modal, setModal] = useState(false);
   const [eventFilter, setEventFilter] = useState('');
   const [preview, setPreview] = useState(null);
@@ -733,6 +789,7 @@ function ExpensesPage({ user, events, expenses, contributions, reload }) {
   const selectedEvent = events.find((e) => e.id === eventFilter);
   const collected = contributions.filter((c) => c.eventId === eventFilter && c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const spent = expenses.filter((e) => e.eventId === eventFilter).reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const handedOver = handovers.filter((h) => h.eventId === eventFilter).reduce((sum, h) => sum + Number(h.amount || 0), 0);
 
   const remove = async (expense) => {
     if (window.confirm('Delete this expense?')) {
@@ -745,7 +802,7 @@ function ExpensesPage({ user, events, expenses, contributions, reload }) {
     <div className="page">
       <PageTitle title="Expenses" subtitle="Record spending with bill photos and event balances." actions={authorized && <button className="primary-btn" onClick={() => setModal(true)}><Plus size={16} />Add Expense</button>} />
       <label className="filter">Event Filter<select value={eventFilter} onChange={(e) => setEventFilter(e.target.value)}><option value="">All events</option>{events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
-      {selectedEvent && <div className="stats"><Stat title="Collected" value={currency(collected)} icon={Banknote} tone="good" /><Stat title="Spent" value={currency(spent)} icon={Receipt} tone="bad" /><Stat title="Balance" value={currency(collected - spent)} icon={FileSpreadsheet} tone={collected - spent >= 0 ? 'good' : 'bad'} /></div>}
+      {selectedEvent && <div className="stats"><Stat title="Collected" value={currency(collected)} icon={Banknote} tone="good" /><Stat title="Handed Over" value={currency(handedOver)} icon={Banknote} tone="warn" /><Stat title="Spent" value={currency(spent)} icon={Receipt} tone="bad" /><Stat title="Event Balance" value={currency(handedOver - spent)} icon={FileSpreadsheet} tone={handedOver - spent >= 0 ? 'good' : 'bad'} /></div>}
       <DataTable headers={['Event', 'Category', 'Date', 'Description', 'Bill', 'Amount', authorized ? 'Actions' : '']}>
         {visible.map((e) => <tr key={e.id}><td>{e.eventName}</td><td>{e.category}</td><td>{e.date}</td><td>{e.description}</td><td>{e.billUrl ? <button className="link-btn" onClick={() => setPreview(e.billUrl)}>View</button> : '-'}</td><td><strong>{currency(e.amount)}</strong></td>{authorized && <td><button className="danger-btn small" onClick={() => remove(e)}>Delete</button></td>}</tr>)}
       </DataTable>
@@ -788,14 +845,16 @@ function ExpenseModal({ events, onClose, reload }) {
   </form></Modal>;
 }
 
-function ReportsPage({ staff, events, contributions, expenses }) {
+function ReportsPage({ staff, events, contributions, expenses, handovers }) {
   const [mode, setMode] = useState('event');
   const [eventId, setEventId] = useState('');
   const [eventIds, setEventIds] = useState([]);
   const [range, setRange] = useState({ start: '', end: '' });
   const [view, setView] = useState('details');
   const [status, setStatus] = useState('all');
-  const statusOptions = view === 'staff'
+  const statusOptions = view === 'account'
+    ? [['all', 'All Events']]
+    : view === 'staff'
     ? [
       ['all', 'All Staff'],
       ['paid', 'Fully Paid'],
@@ -809,7 +868,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
       ['unpaid', 'Unpaid Only'],
       ['exempt', 'Exempt Only']
     ];
-  const report = useMemo(() => buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses }), [mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses]);
+  const report = useMemo(() => buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses, handovers }), [mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses, handovers]);
 
   const shareText = () => encodeURIComponent(report.summaryText || 'No report selected.');
   const exportExcel = () => report.sheets.length && downloadWorkbook(report.filename.replace('.pdf', '.xlsx'), report.sheets);
@@ -934,7 +993,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
           <label>Start<input type="date" value={range.start} onChange={(e) => setRange({ ...range, start: e.target.value })} /></label>
           <label>End<input type="date" value={range.end} onChange={(e) => setRange({ ...range, end: e.target.value })} /></label>
         </>}
-        <label>Report View<select value={view} onChange={(e) => { setView(e.target.value); setStatus('all'); }}><option value="details">Payment Details</option><option value="staff">Staff Summary</option></select></label>
+        <label>Report View<select value={view} onChange={(e) => { setView(e.target.value); setStatus('all'); }}><option value="details">Payment Details</option><option value="staff">Staff Summary</option><option value="account">Event Account Sheet</option></select></label>
         <label>Status Filter<select value={status} onChange={(e) => setStatus(e.target.value)}>{statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <div className="row-actions">
           <button className="secondary-btn" disabled={!report.rows.length} onClick={exportExcel}><FileSpreadsheet size={16} />Excel</button>
@@ -959,8 +1018,8 @@ function ReportsPage({ staff, events, contributions, expenses }) {
         <div className="stats">
           <Stat title="Events" value={report.stats.events} icon={CalendarDays} />
           <Stat title="Collected" value={currency(report.stats.collected)} icon={Banknote} tone="good" />
-          <Stat title="Not Paid" value={currency(report.stats.due)} icon={XCircle} tone="bad" />
-          <Stat title="Paid / Unpaid" value={`${report.stats.paidCount} / ${report.stats.unpaidCount}`} icon={Users} tone="warn" />
+          <Stat title="Handed Over" value={currency(report.stats.handedOver)} icon={Receipt} tone="warn" />
+          <Stat title="Guild Balance" value={currency(report.stats.collected - report.stats.handedOver)} icon={FileSpreadsheet} tone={report.stats.collected - report.stats.handedOver >= 0 ? 'good' : 'bad'} />
         </div>
       )}
       {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td className={report.headers[j]?.includes('Paid') ? 'money-cell' : ''} key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
@@ -968,7 +1027,7 @@ function ReportsPage({ staff, events, contributions, expenses }) {
   );
 }
 
-function buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses }) {
+function buildReport({ mode, eventId, eventIds, range, view, status, staff, events, contributions, expenses, handovers }) {
   let selectedEvents = [];
   if (mode === 'event') selectedEvents = events.filter((event) => event.id === eventId);
   if (mode === 'events') selectedEvents = events.filter((event) => eventIds.includes(event.id));
@@ -1015,6 +1074,26 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
       dueAmount: records.reduce((sum, record) => sum + record.dueAmount, 0)
     };
   });
+  const accountRecords = selectedEvents.map((event) => {
+    const eventContributions = detailRecords.filter((record) => record.eventId === event.id);
+    const collected = eventContributions.reduce((sum, record) => sum + record.paidAmount, 0);
+    const due = eventContributions.reduce((sum, record) => sum + record.dueAmount, 0);
+    const handedOver = handovers.filter((handover) => handover.eventId === event.id).reduce((sum, handover) => sum + Number(handover.amount || 0), 0);
+    const spent = expenses.filter((expense) => expense.eventId === event.id).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    return {
+      eventId: event.id,
+      eventName: event.name,
+      eventDate: event.date,
+      collected,
+      due,
+      handedOver,
+      spent,
+      guildBalance: collected - handedOver,
+      eventBalance: handedOver - spent,
+      paidCount: eventContributions.filter((record) => record.status === 'Paid').length,
+      unpaidCount: eventContributions.filter((record) => record.status === 'Unpaid').length
+    };
+  });
 
   const filterDetails = (record) => {
     if (status === 'paid') return record.status === 'Paid';
@@ -1032,14 +1111,19 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
 
   const visibleDetails = detailRecords.filter(filterDetails).sort((a, b) => a.eventDate.localeCompare(b.eventDate) || a.eventName.localeCompare(b.eventName) || sortByStaffNumber(a, b));
   const visibleStaff = staffRecords.filter(filterStaff).sort(sortByStaffNumber);
-  const rows = view === 'staff'
+  const rows = view === 'account'
+    ? accountRecords.map((record) => [record.eventDate, record.eventName, currency(record.collected), currency(record.due), currency(record.handedOver), currency(record.spent), currency(record.guildBalance), currency(record.eventBalance)])
+    : view === 'staff'
     ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.category, record.serviceStatus, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
     : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.category, record.serviceStatus, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
 
-  const headers = view === 'staff'
+  const headers = view === 'account'
+    ? ['Date', 'Event', 'Collected', 'Not Collected', 'Handed Over', 'Expenses', 'Guild Balance', 'Event Balance']
+    : view === 'staff'
     ? ['ID', 'Staff', 'Category', 'Service Status', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
     : ['Event', 'Date', 'ID', 'Staff', 'Category', 'Service Status', 'Payment Status', 'Paid', 'Not Paid'];
   const singleEventPaymentPdf = mode === 'event' && view === 'details';
+  const accountView = view === 'account';
   const pdfHeaders = singleEventPaymentPdf
     ? ['No', 'ID', 'Staff', 'Category', 'Status', 'Paid', 'Not Paid']
     : headers;
@@ -1050,6 +1134,7 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const collected = detailRecords.reduce((sum, record) => sum + record.paidAmount, 0);
   const due = detailRecords.reduce((sum, record) => sum + record.dueAmount, 0);
   const spent = selectedEvents.reduce((sum, event) => sum + expenses.filter((expense) => expense.eventId === event.id).reduce((inner, expense) => inner + Number(expense.amount || 0), 0), 0);
+  const handedOver = selectedEvents.reduce((sum, event) => sum + handovers.filter((handover) => handover.eventId === event.id).reduce((inner, handover) => inner + Number(handover.amount || 0), 0), 0);
   const paidCount = detailRecords.filter((record) => record.status === 'Paid').length;
   const unpaidCount = detailRecords.filter((record) => record.status === 'Unpaid').length;
   const title = mode === 'event'
@@ -1076,10 +1161,21 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     filename: `${title.replace(/\s+/g, '-').toLowerCase()}.pdf`,
     signatureFilename: `${title.replace(/\s+/g, '-').toLowerCase()}-signature-sheet.pdf`,
     signatureRows,
-    pdfOrientation: singleEventPaymentPdf || view === 'staff' ? 'portrait' : 'landscape',
+    pdfOrientation: accountView ? 'landscape' : singleEventPaymentPdf || view === 'staff' ? 'portrait' : 'landscape',
     pdfFontSize: singleEventPaymentPdf ? 8.8 : 8.2,
     pdfHeadFontSize: singleEventPaymentPdf ? 9 : 8.5,
-    pdfColumnStyles: singleEventPaymentPdf
+    pdfColumnStyles: accountView
+      ? {
+        0: { cellWidth: 22 },
+        1: { cellWidth: 58 },
+        2: { cellWidth: 28, halign: 'right', overflow: 'visible' },
+        3: { cellWidth: 30, halign: 'right', overflow: 'visible' },
+        4: { cellWidth: 30, halign: 'right', overflow: 'visible' },
+        5: { cellWidth: 28, halign: 'right', overflow: 'visible' },
+        6: { cellWidth: 30, halign: 'right', overflow: 'visible' },
+        7: { cellWidth: 30, halign: 'right', overflow: 'visible' }
+      }
+      : singleEventPaymentPdf
       ? {
         0: { cellWidth: 12, halign: 'center' },
         1: { cellWidth: 14, halign: 'center' },
@@ -1113,9 +1209,21 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         7: { cellWidth: 22, halign: 'right', overflow: 'visible' },
         8: { cellWidth: 22, halign: 'right', overflow: 'visible' }
       },
-    stats: { events: selectedEvents.length, collected, due, spent, paidCount, unpaidCount },
-    summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nNot Paid: ${currency(due)}\nSpent: ${currency(spent)}\nBalance: ${currency(collected - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
+    stats: { events: selectedEvents.length, collected, due, handedOver, spent, paidCount, unpaidCount },
+    summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nNot Collected: ${currency(due)}\nHanded Over: ${currency(handedOver)}\nExpenses: ${currency(spent)}\nGuild Balance: ${currency(collected - handedOver)}\nEvent Balance: ${currency(handedOver - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
     sheets: [
+      ['Account Sheet', accountRecords.map((record) => ({
+        Date: record.eventDate,
+        Event: record.eventName,
+        Collected: record.collected,
+        'Not Collected': record.due,
+        'Handed Over': record.handedOver,
+        Expenses: record.spent,
+        'Guild Balance': record.guildBalance,
+        'Event Balance': record.eventBalance,
+        Paid: record.paidCount,
+        Unpaid: record.unpaidCount
+      }))],
       ['Payment Details', visibleDetails.map((record) => ({
         Event: record.eventName,
         Date: record.eventDate,
@@ -1141,12 +1249,17 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         'Total Not Paid': record.dueAmount
       }))],
       ['Event Summary', selectedEvents.map((event) => {
+        const account = accountRecords.find((record) => record.eventId === event.id);
         const records = detailRecords.filter((record) => record.eventId === event.id);
         return {
           Event: event.name,
           Date: event.date,
-          Collected: records.reduce((sum, record) => sum + record.paidAmount, 0),
-          'Not Paid': records.reduce((sum, record) => sum + record.dueAmount, 0),
+          Collected: account.collected,
+          'Not Collected': account.due,
+          'Handed Over': account.handedOver,
+          Expenses: account.spent,
+          'Guild Balance': account.guildBalance,
+          'Event Balance': account.eventBalance,
           Paid: records.filter((record) => record.status === 'Paid').length,
           Unpaid: records.filter((record) => record.status === 'Unpaid').length,
           Exempt: records.filter((record) => record.status === 'Exempt').length
@@ -1161,7 +1274,7 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState('dashboard');
   const [menu, setMenu] = useState(false);
-  const [data, setData] = useState({ users: [], staff: [], events: [], contributions: [], expenses: [] });
+  const [data, setData] = useState({ users: [], staff: [], events: [], contributions: [], expenses: [], handovers: [] });
 
   const logout = async () => {
     await signOut(auth);
@@ -1177,15 +1290,16 @@ export default function App() {
 
   const loadData = async () => {
     if (!user || user.status !== 'approved') return;
-    const [usersSnap, staffSnap, eventsSnap, contributionsSnap, expensesSnap] = await Promise.all([
+    const [usersSnap, staffSnap, eventsSnap, contributionsSnap, expensesSnap, handoversSnap] = await Promise.all([
       getDocs(collection(db, 'users')),
       getDocs(query(collection(db, 'staff'), orderBy('name'))),
       getDocs(query(collection(db, 'events'), orderBy('date', 'desc'))),
       getDocs(collection(db, 'contributions')),
-      getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc')))
+      getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc'))),
+      getDocs(query(collection(db, 'handovers'), orderBy('date', 'desc')))
     ]);
     const unpack = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
-    setData({ users: unpack(usersSnap), staff: unpack(staffSnap).sort(sortByStaffNumber), events: unpack(eventsSnap), contributions: unpack(contributionsSnap), expenses: unpack(expensesSnap) });
+    setData({ users: unpack(usersSnap), staff: unpack(staffSnap).sort(sortByStaffNumber), events: unpack(eventsSnap), contributions: unpack(contributionsSnap), expenses: unpack(expensesSnap), handovers: unpack(handoversSnap) });
   };
 
   useEffect(() => {
@@ -1212,7 +1326,7 @@ export default function App() {
     dashboard: <Dashboard user={user} {...data} reload={loadData} />,
     staff: <StaffPage user={user} staff={data.staff} reload={loadData} />,
     events: <EventsPage user={user} {...data} reload={loadData} />,
-    expenses: <ExpensesPage user={user} events={data.events} expenses={data.expenses} contributions={data.contributions} reload={loadData} />,
+    expenses: <ExpensesPage user={user} events={data.events} expenses={data.expenses} contributions={data.contributions} handovers={data.handovers} reload={loadData} />,
     reports: <ReportsPage {...data} />
   };
 

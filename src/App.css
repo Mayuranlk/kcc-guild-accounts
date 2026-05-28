@@ -339,6 +339,13 @@ td { font-size: 14px; }
 .signature-actions p {
   margin: 0;
 }
+.handover-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr 1.4fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
 .multi-select {
   border: 1px solid var(--line);
   background: #fff;
@@ -367,6 +374,7 @@ td { font-size: 14px; }
 @media (max-width: 1040px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid.two { grid-template-columns: 1fr; }
+  .handover-form { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -403,6 +411,7 @@ td { font-size: 14px; }
   .page-title-row { display: grid; }
   .stats { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
+  .handover-form { grid-template-columns: 1fr; }
   .row-actions { width: 100%; }
   .row-actions > * { flex: 1; }
   .auth-panel { padding: 24px; }
