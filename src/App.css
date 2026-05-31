@@ -89,6 +89,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-radius: 6px;
   background: #f8fafc;
 }
+.public-row.paid-row {
+  background: rgba(22, 132, 87, 0.055);
+  border-color: rgba(22, 132, 87, 0.14);
+}
+.public-row.unpaid-row {
+  background: rgba(196, 61, 61, 0.055);
+  border-color: rgba(196, 61, 61, 0.14);
+}
 .public-row span,
 .public-row em {
   color: var(--muted);

@@ -383,7 +383,7 @@ function PublicStatusList({ title, rows, paid }) {
       <h2>{title}</h2>
       <div className="public-list">
         {rows.map((row, index) => (
-          <div className="public-row" key={`${row.employeeId}-${index}`}>
+          <div className={`public-row ${paid ? 'paid-row' : 'unpaid-row'}`} key={`${row.employeeId}-${index}`}>
             <span>{row.employeeId}</span>
             <strong>{row.name}</strong>
             <em>{row.category}</em>
