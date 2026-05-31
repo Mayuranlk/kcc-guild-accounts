@@ -485,13 +485,91 @@ td { font-size: 14px; }
   .row-actions > * { flex: 1; }
   .auth-panel { padding: 24px; }
   .auth-panel h1, .page-title-row h1 { font-size: 24px; }
-  .public-page { padding: 14px; }
-  .public-header { display: grid; }
+  .public-page {
+    padding: 10px;
+    background: #f6f8fb;
+  }
+  .public-card {
+    gap: 12px;
+  }
+  .public-header {
+    display: grid;
+    padding: 16px;
+    border-radius: 8px;
+  }
+  .public-header p {
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .public-header h1 {
+    font-size: 22px;
+    line-height: 1.16;
+  }
+  .public-header span {
+    font-size: 13px;
+  }
   .public-stats,
   .public-lists { grid-template-columns: 1fr; }
-  .public-row { grid-template-columns: 44px 1fr; }
-  .public-row em,
-  .public-row b { grid-column: 2; text-align: left; }
+  .public-stats {
+    gap: 10px;
+  }
+  .public-stats .stat {
+    min-height: 82px;
+    padding: 14px;
+  }
+  .public-stats .stat strong {
+    font-size: 21px;
+  }
+  .public-lists {
+    gap: 12px;
+  }
+  .public-list {
+    gap: 9px;
+  }
+  .public-row {
+    grid-template-columns: 44px 1fr auto;
+    grid-template-areas:
+      "id name amount"
+      "id category amount";
+    gap: 3px 10px;
+    padding: 12px;
+    align-items: center;
+  }
+  .public-row span {
+    grid-area: id;
+    align-self: stretch;
+    display: grid;
+    place-items: center;
+    background: #eef3f9;
+    border-radius: 6px;
+    color: var(--primary-2);
+    font-weight: 900;
+  }
+  .public-row strong {
+    grid-area: name;
+    line-height: 1.25;
+  }
+  .public-row em {
+    grid-area: category;
+    font-size: 12px;
+  }
+  .public-row b {
+    grid-area: amount;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--primary-2);
+  }
+  .public-card .panel {
+    padding: 14px;
+  }
+  .public-card .panel h2 {
+    font-size: 17px;
+    margin-bottom: 12px;
+  }
+  .public-updated {
+    font-size: 12px;
+    padding: 0 4px 10px;
+  }
 }
 
 @media print {
