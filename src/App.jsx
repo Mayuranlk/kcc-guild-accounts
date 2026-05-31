@@ -88,6 +88,48 @@ const staffCategory = (value) => {
   if (normalized.includes('attach')) return 'Attachment';
   return 'Academic';
 };
+const publicStatusLink = (eventId) => `${window.location.origin}${window.location.pathname}?status=${encodeURIComponent(eventId)}`;
+
+function buildPublicStatus(event, staff, contributions) {
+  const activeRows = contributions
+    .map((item) => {
+      const person = staff.find((staffItem) => staffItem.id === item.staffId);
+      return {
+        employeeId: person?.employeeId || item.staffId,
+        name: person?.name || item.staffName,
+        category: staffCategory(person?.category || person?.section),
+        exempt: !!item.exempt,
+        paid: !!item.paid,
+        amount: Number(item.amount || 0),
+        due: item.exempt || item.paid ? 0 : Number(event.amount || 0)
+      };
+    })
+    .sort(sortByStaffNumber);
+
+  const paidRows = activeRows.filter((row) => row.paid && !row.exempt);
+  const unpaidRows = activeRows.filter((row) => !row.paid && !row.exempt);
+  const exemptRows = activeRows.filter((row) => row.exempt);
+  const collected = paidRows.reduce((sum, row) => sum + row.amount, 0);
+  const notCollected = unpaidRows.reduce((sum, row) => sum + row.due, 0);
+  const expected = activeRows.filter((row) => !row.exempt).length * Number(event.amount || 0);
+
+  return {
+    eventId: event.id,
+    eventName: event.name,
+    eventDate: event.date,
+    amountPerStaff: Number(event.amount || 0),
+    expected,
+    collected,
+    notCollected,
+    paidCount: paidRows.length,
+    unpaidCount: unpaidRows.length,
+    exemptCount: exemptRows.length,
+    paidRows,
+    unpaidRows,
+    exemptRows,
+    updatedAt: new Date().toISOString()
+  };
+}
 
 function parseCsv(text) {
   return text
@@ -275,6 +317,83 @@ function PendingScreen({ user, onLogout, onRefresh }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function PublicStatusPage({ eventId }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadStatus = async () => {
+      try {
+        const statusDoc = await getDoc(doc(db, 'publicStatuses', eventId));
+        if (!statusDoc.exists()) {
+          setError('This event collection status link is not published yet.');
+        } else {
+          setStatus(statusDoc.data());
+        }
+      } catch (err) {
+        setError(err.message || 'Unable to load event collection status.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadStatus();
+  }, [eventId]);
+
+  if (loading) {
+    return <main className="public-page"><section className="public-card"><h1>Loading collection status...</h1></section></main>;
+  }
+
+  if (error) {
+    return <main className="public-page"><section className="public-card"><h1>Collection Status</h1><p>{error}</p></section></main>;
+  }
+
+  return (
+    <main className="public-page">
+      <section className="public-card">
+        <header className="public-header">
+          <div>
+            <p>Kilinochchi Central College Guild</p>
+            <h1>{status.eventName}</h1>
+            <span>{status.eventDate} | {currency(status.amountPerStaff)} per staff</span>
+          </div>
+          <button className="secondary-btn" onClick={() => window.print()}>Print</button>
+        </header>
+        <div className="stats public-stats">
+          <Stat title="Collected" value={currency(status.collected)} icon={Banknote} tone="good" />
+          <Stat title="Not Collected" value={currency(status.notCollected)} icon={XCircle} tone="bad" />
+          <Stat title="Paid / Unpaid" value={`${status.paidCount} / ${status.unpaidCount}`} icon={Users} tone="warn" />
+        </div>
+        <div className="public-lists">
+          <PublicStatusList title={`Paid Staff (${status.paidRows.length})`} rows={status.paidRows} paid />
+          <PublicStatusList title={`Not Paid Staff (${status.unpaidRows.length})`} rows={status.unpaidRows} />
+        </div>
+        {status.exemptRows?.length > 0 && <PublicStatusList title={`Exempt Staff (${status.exemptRows.length})`} rows={status.exemptRows} />}
+        <p className="public-updated">Updated: {new Date(status.updatedAt).toLocaleString()}</p>
+      </section>
+    </main>
+  );
+}
+
+function PublicStatusList({ title, rows, paid }) {
+  return (
+    <section className="panel">
+      <h2>{title}</h2>
+      <div className="public-list">
+        {rows.map((row, index) => (
+          <div className="public-row" key={`${row.employeeId}-${index}`}>
+            <span>{row.employeeId}</span>
+            <strong>{row.name}</strong>
+            <em>{row.category}</em>
+            <b>{currency(paid ? row.amount : row.due)}</b>
+          </div>
+        ))}
+        {rows.length === 0 && <p className="muted">No records.</p>}
+      </div>
+    </section>
   );
 }
 
@@ -606,6 +725,24 @@ function EventsPage({ user, staff, events, contributions, expenses, handovers, r
       });
     }
     await batch.commit();
+    const savedContributions = !editingEvent
+      ? activeStaff.map((s) => ({
+        id: `${id}_${s.id}`,
+        eventId: id,
+        staffId: s.id,
+        staffName: s.name,
+        exempt: form.exemptIds.includes(s.id),
+        paid: false,
+        amount: 0,
+        updatedAt: new Date().toISOString()
+      }))
+      : existingEventContributions.map((item) => ({
+        ...item,
+        exempt: form.exemptIds.includes(item.staffId),
+        amount: form.exemptIds.includes(item.staffId) ? 0 : Number(item.amount || 0),
+        paid: form.exemptIds.includes(item.staffId) ? false : !!item.paid
+      }));
+    await setDoc(doc(db, 'publicStatuses', id), buildPublicStatus(eventData, staff, savedContributions));
     resetEventForm();
     reload();
   };
@@ -614,6 +751,7 @@ function EventsPage({ user, staff, events, contributions, expenses, handovers, r
     if (!window.confirm(`Delete ${event.name} and all linked records?`)) return;
     const batch = writeBatch(db);
     batch.delete(doc(db, 'events', event.id));
+    batch.delete(doc(db, 'publicStatuses', event.id));
     contributions.filter((c) => c.eventId === event.id).forEach((c) => batch.delete(doc(db, 'contributions', c.id)));
     expenses.filter((e) => e.eventId === event.id).forEach((e) => batch.delete(doc(db, 'expenses', e.id)));
     handovers.filter((h) => h.eventId === event.id).forEach((h) => batch.delete(doc(db, 'handovers', h.id)));
@@ -679,8 +817,18 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
     .sort(sortByStaffNumber);
 
   const updateContribution = async (item, changes) => {
-    await updateDoc(doc(db, 'contributions', item.id), { ...changes, updatedAt: new Date().toISOString() });
+    const updatedItem = { ...item, ...changes, updatedAt: new Date().toISOString() };
+    await updateDoc(doc(db, 'contributions', item.id), updatedItem);
+    const updatedContributions = contributions.map((contribution) => contribution.id === item.id ? updatedItem : contribution);
+    await setDoc(doc(db, 'publicStatuses', event.id), buildPublicStatus(event, staff, updatedContributions));
     reload();
+  };
+
+  const publishStatus = async () => {
+    await setDoc(doc(db, 'publicStatuses', event.id), buildPublicStatus(event, staff, contributions));
+    const link = publicStatusLink(event.id);
+    await navigator.clipboard?.writeText(link);
+    alert(`Public collection status link copied:\n${link}`);
   };
 
   const syncMissingStaff = async () => {
@@ -704,6 +852,17 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
       });
     });
     await batch.commit();
+    const added = missingActiveStaff.map((person) => ({
+      id: `${event.id}_${person.id}`,
+      eventId: event.id,
+      staffId: person.id,
+      staffName: person.name,
+      exempt: event.exemptIds?.includes(person.id),
+      paid: false,
+      amount: 0,
+      updatedAt: new Date().toISOString()
+    }));
+    await setDoc(doc(db, 'publicStatuses', event.id), buildPublicStatus(event, staff, [...contributions, ...added]));
     reload();
     alert(`${missingActiveStaff.length} missing staff added to this event.`);
   };
@@ -734,7 +893,11 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
   return (
     <div className="page">
       <button className="secondary-btn" onClick={onBack}><ChevronLeft size={16} />Back</button>
-      <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} actions={authorized && <button className="secondary-btn" onClick={syncMissingStaff}>Add Missing Staff ({missingActiveStaff.length})</button>} />
+      <PageTitle title={event.name} subtitle={`${event.date} | ${currency(event.amount)} per staff`} actions={authorized && <>
+        <button className="secondary-btn" onClick={publishStatus}>Publish/Copy Public Link</button>
+        <button className="secondary-btn" onClick={() => window.open(publicStatusLink(event.id), '_blank', 'noopener,noreferrer')}>Open Public Status</button>
+        <button className="secondary-btn" onClick={syncMissingStaff}>Add Missing Staff ({missingActiveStaff.length})</button>
+      </>} />
       <div className="stats">
         <Stat title="Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
         <Stat title="Handed Over" value={currency(handedOver)} icon={Banknote} tone="warn" />
@@ -1318,6 +1481,8 @@ export default function App() {
   }, [user]);
 
   if (!firebaseReady) return <SetupScreen />;
+  const publicEventId = new URLSearchParams(window.location.search).get('status');
+  if (publicEventId) return <PublicStatusPage eventId={publicEventId} />;
   if (checking) return <main className="auth-page"><section className="auth-panel"><h1>Loading...</h1></section></main>;
   if (!user) return <AuthScreen onUser={setUser} />;
   if (user.status !== 'approved') return <PendingScreen user={user} onLogout={logout} onRefresh={refreshUser} />;
