@@ -34,6 +34,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
   min-height: 100vh;
   background: #eef3f9;
   padding: 24px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .public-card {
   width: min(1120px, 100%);
@@ -493,10 +495,15 @@ td { font-size: 14px; }
 }
 
 @media print {
-  .public-page { background: white; padding: 0; }
-  .public-header button { display: none; }
-  .public-card { width: 100%; }
-  .public-header,
-  .panel,
-  .stat { box-shadow: none; }
+  body:has(.public-page) * {
+    visibility: hidden !important;
+  }
+  body:has(.public-page)::before {
+    content: "Printing is disabled for this public collection status page.";
+    visibility: visible;
+    display: block;
+    padding: 24px;
+    font: 16px Arial, sans-serif;
+    color: #172033;
+  }
 }

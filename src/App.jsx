@@ -344,15 +344,15 @@ function PublicStatusPage({ eventId }) {
   }, [eventId]);
 
   if (loading) {
-    return <main className="public-page"><section className="public-card"><h1>Loading collection status...</h1></section></main>;
+    return <main className="public-page" onContextMenu={(event) => event.preventDefault()}><section className="public-card"><h1>Loading collection status...</h1></section></main>;
   }
 
   if (error) {
-    return <main className="public-page"><section className="public-card"><h1>Collection Status</h1><p>{error}</p></section></main>;
+    return <main className="public-page" onContextMenu={(event) => event.preventDefault()}><section className="public-card"><h1>Collection Status</h1><p>{error}</p></section></main>;
   }
 
   return (
-    <main className="public-page">
+    <main className="public-page" onContextMenu={(event) => event.preventDefault()}>
       <section className="public-card">
         <header className="public-header">
           <div>
@@ -360,7 +360,6 @@ function PublicStatusPage({ eventId }) {
             <h1>{status.eventName}</h1>
             <span>{status.eventDate} | {currency(status.amountPerStaff)} per staff</span>
           </div>
-          <button className="secondary-btn" onClick={() => window.print()}>Print</button>
         </header>
         <div className="stats public-stats">
           <Stat title="Collected" value={currency(status.collected)} icon={Banknote} tone="good" />
