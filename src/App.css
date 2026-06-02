@@ -68,7 +68,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   color: var(--muted);
 }
 .public-stats {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 .public-lists {
   display: grid;
@@ -92,6 +92,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .public-row.paid-row {
   background: rgba(22, 132, 87, 0.055);
   border-color: rgba(22, 132, 87, 0.14);
+}
+.public-row.extra-row {
+  background: rgba(22, 132, 87, 0.095);
+  border-color: rgba(22, 132, 87, 0.24);
 }
 .public-row.unpaid-row {
   background: rgba(196, 61, 61, 0.055);
@@ -290,6 +294,14 @@ table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th, td { padding: 13px 14px; border-bottom: 1px solid #edf1f6; text-align: left; vertical-align: middle; }
 th { background: #f8fafc; color: #475467; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 td { font-size: 14px; }
+.extra-payment-row td {
+  background: rgba(22, 132, 87, 0.055);
+}
+.extra-note {
+  color: var(--green);
+  font-weight: 800;
+  margin-top: 4px;
+}
 .money-cell {
   text-align: right;
   white-space: nowrap;

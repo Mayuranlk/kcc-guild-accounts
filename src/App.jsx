@@ -91,17 +91,22 @@ const staffCategory = (value) => {
 const publicStatusLink = (eventId) => `${window.location.origin}${window.location.pathname}?status=${encodeURIComponent(eventId)}`;
 
 function buildPublicStatus(event, staff, contributions) {
+  const amountPerStaff = Number(event.amount || 0);
   const activeRows = contributions
     .map((item) => {
       const person = staff.find((staffItem) => staffItem.id === item.staffId);
+      const paidAmount = Number(item.amount || 0);
+      const extraAmount = item.exempt || !item.paid ? 0 : Math.max(0, paidAmount - amountPerStaff);
       return {
         employeeId: person?.employeeId || item.staffId,
         name: person?.name || item.staffName,
         category: staffCategory(person?.category || person?.section),
         exempt: !!item.exempt,
         paid: !!item.paid,
-        amount: Number(item.amount || 0),
-        due: item.exempt || item.paid ? 0 : Number(event.amount || 0)
+        amount: paidAmount,
+        decidedAmount: item.exempt || !item.paid ? 0 : Math.min(paidAmount, amountPerStaff),
+        extraAmount,
+        due: item.exempt || item.paid ? 0 : amountPerStaff
       };
     })
     .sort(sortByStaffNumber);
@@ -109,16 +114,21 @@ function buildPublicStatus(event, staff, contributions) {
   const paidRows = activeRows.filter((row) => row.paid && !row.exempt);
   const unpaidRows = activeRows.filter((row) => !row.paid && !row.exempt);
   const exemptRows = activeRows.filter((row) => row.exempt);
-  const collected = paidRows.reduce((sum, row) => sum + row.amount, 0);
+  const totalNeeded = activeRows.filter((row) => !row.exempt).length * amountPerStaff;
+  const decidedCollected = paidRows.reduce((sum, row) => sum + row.decidedAmount, 0);
+  const extraCollected = paidRows.reduce((sum, row) => sum + row.extraAmount, 0);
+  const collected = decidedCollected + extraCollected;
   const notCollected = unpaidRows.reduce((sum, row) => sum + row.due, 0);
-  const expected = activeRows.filter((row) => !row.exempt).length * Number(event.amount || 0);
 
   return {
     eventId: event.id,
     eventName: event.name,
     eventDate: event.date,
-    amountPerStaff: Number(event.amount || 0),
-    expected,
+    amountPerStaff,
+    expected: totalNeeded,
+    totalNeeded,
+    decidedCollected,
+    extraCollected,
     collected,
     notCollected,
     paidCount: paidRows.length,
@@ -351,6 +361,12 @@ function PublicStatusPage({ eventId }) {
     return <main className="public-page" onContextMenu={(event) => event.preventDefault()}><section className="public-card"><h1>Collection Status</h1><p>{error}</p></section></main>;
   }
 
+  const totalNeeded = Number(status.totalNeeded ?? status.expected ?? 0);
+  const decidedCollected = Number(status.decidedCollected ?? Math.max(0, Number(status.collected || 0) - Number(status.extraCollected || 0)));
+  const extraCollected = Number(status.extraCollected || 0);
+  const collected = Number(status.collected || 0);
+  const notCollected = Number(status.notCollected || Math.max(0, totalNeeded - decidedCollected));
+
   return (
     <main className="public-page" onContextMenu={(event) => event.preventDefault()}>
       <section className="public-card">
@@ -362,8 +378,10 @@ function PublicStatusPage({ eventId }) {
           </div>
         </header>
         <div className="stats public-stats">
-          <Stat title="Collected" value={currency(status.collected)} icon={Banknote} tone="good" />
-          <Stat title="Not Collected" value={currency(status.notCollected)} icon={XCircle} tone="bad" />
+          <Stat title="Total Needed" value={currency(totalNeeded)} icon={FileSpreadsheet} />
+          <Stat title="Collected" value={currency(collected)} icon={Banknote} tone="good" />
+          <Stat title="Not Collected" value={currency(notCollected)} icon={XCircle} tone="bad" />
+          <Stat title="Extra Collected" value={currency(extraCollected)} icon={CheckCircle2} tone="good" />
           <Stat title="Paid / Unpaid" value={`${status.paidCount} / ${status.unpaidCount}`} icon={Users} tone="warn" />
         </div>
         <div className="public-lists">
@@ -383,10 +401,10 @@ function PublicStatusList({ title, rows, paid }) {
       <h2>{title}</h2>
       <div className="public-list">
         {rows.map((row, index) => (
-          <div className={`public-row ${paid ? 'paid-row' : 'unpaid-row'}`} key={`${row.employeeId}-${index}`}>
+          <div className={`public-row ${paid ? 'paid-row' : 'unpaid-row'} ${row.extraAmount > 0 ? 'extra-row' : ''}`} key={`${row.employeeId}-${index}`}>
             <span>{row.employeeId}</span>
             <strong>{row.name}</strong>
-            <em>{row.category}</em>
+            <em>{row.extraAmount > 0 ? `${row.category} | Extra ${currency(row.extraAmount)}` : row.category}</em>
             <b>{currency(paid ? row.amount : row.due)}</b>
           </div>
         ))}
@@ -806,6 +824,8 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
   const visible = contributions.filter((c) => c.staffName.toLowerCase().includes(search.toLowerCase()));
   const collected = contributions.filter((c) => c.paid).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const expected = contributions.filter((c) => !c.exempt).length * Number(event.amount || 0);
+  const decidedCollected = contributions.filter((c) => c.paid && !c.exempt).reduce((sum, c) => sum + Math.min(Number(c.amount || 0), Number(event.amount || 0)), 0);
+  const extraCollected = contributions.filter((c) => c.paid && !c.exempt).reduce((sum, c) => sum + Math.max(0, Number(c.amount || 0) - Number(event.amount || 0)), 0);
   const handedOver = handovers.reduce((sum, h) => sum + Number(h.amount || 0), 0);
   const spent = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   const cashBalance = collected - handedOver;
@@ -898,7 +918,12 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
         <button className="secondary-btn" onClick={syncMissingStaff}>Add Missing Staff ({missingActiveStaff.length})</button>
       </>} />
       <div className="stats">
-        <Stat title="Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
+        <Stat title="Total Needed" value={currency(expected)} icon={FileSpreadsheet} />
+        <Stat title="Actual Collected" value={currency(collected)} icon={CheckCircle2} tone="good" />
+        <Stat title="Extra Collected" value={currency(extraCollected)} icon={Banknote} tone="good" />
+        <Stat title="Not Collected" value={currency(expected - decidedCollected)} icon={XCircle} tone="bad" />
+      </div>
+      <div className="stats">
         <Stat title="Handed Over" value={currency(handedOver)} icon={Banknote} tone="warn" />
         <Stat title="Guild Cash Balance" value={currency(cashBalance)} icon={FileSpreadsheet} tone={cashBalance >= 0 ? 'good' : 'bad'} />
         <Stat title="Event Balance" value={currency(eventBalance)} icon={Receipt} tone={eventBalance >= 0 ? 'good' : 'bad'} />
@@ -930,10 +955,11 @@ function EventDetail({ event, staff, contributions, expenses, handovers, authori
       <DataTable headers={['Staff', 'Status', 'Amount', authorized ? 'Action' : '']}>
         {visible.map((c) => {
           const s = staff.find((item) => item.id === c.staffId);
-          return <tr key={c.id}>
+          const extraAmount = c.paid && !c.exempt ? Math.max(0, Number(c.amount || 0) - Number(event.amount || 0)) : 0;
+          return <tr className={extraAmount > 0 ? 'extra-payment-row' : ''} key={c.id}>
             <td><strong>{c.staffName}</strong><span className="subtext">{s?.employeeId}</span></td>
             <td>{c.exempt ? <span className="badge warn">Exempt</span> : c.paid ? <span className="badge good">Paid</span> : <span className="badge bad">Unpaid</span>}</td>
-            <td><input disabled={!authorized || c.exempt} type="number" value={c.amount || ''} onChange={(e) => updateContribution(c, { amount: Number(e.target.value), paid: Number(e.target.value) > 0 })} /></td>
+            <td><input disabled={!authorized || c.exempt} type="number" value={c.amount || ''} onChange={(e) => updateContribution(c, { amount: Number(e.target.value), paid: Number(e.target.value) > 0 })} />{extraAmount > 0 && <span className="subtext extra-note">Extra {currency(extraAmount)}</span>}</td>
             {authorized && <td><button className="secondary-btn small" disabled={c.exempt} onClick={() => updateContribution(c, { paid: !c.paid, amount: c.paid ? 0 : Number(event.amount || 0) })}>{c.paid ? 'Mark Unpaid' : 'Mark Paid'}</button></td>}
           </tr>;
         })}
@@ -1178,10 +1204,10 @@ function ReportsPage({ staff, events, contributions, expenses, handovers }) {
       </section>
       {report.stats && (
         <div className="stats">
-          <Stat title="Events" value={report.stats.events} icon={CalendarDays} />
-          <Stat title="Collected" value={currency(report.stats.collected)} icon={Banknote} tone="good" />
-          <Stat title="Handed Over" value={currency(report.stats.handedOver)} icon={Receipt} tone="warn" />
-          <Stat title="Guild Balance" value={currency(report.stats.collected - report.stats.handedOver)} icon={FileSpreadsheet} tone={report.stats.collected - report.stats.handedOver >= 0 ? 'good' : 'bad'} />
+          <Stat title="Total Needed" value={currency(report.stats.totalNeeded)} icon={CalendarDays} />
+          <Stat title="Actual Collected" value={currency(report.stats.collected)} icon={Banknote} tone="good" />
+          <Stat title="Extra Collected" value={currency(report.stats.extraCollected)} icon={CheckCircle2} tone="good" />
+          <Stat title="Not Collected" value={currency(report.stats.due)} icon={XCircle} tone="bad" />
         </div>
       )}
       {report.rows.length ? <DataTable headers={report.headers}>{report.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td className={report.headers[j]?.includes('Paid') ? 'money-cell' : ''} key={j}>{cell}</td>)}</tr>)}</DataTable> : <EmptyState title="No report selected" text="Choose an event or date range to generate a report." />}
@@ -1205,6 +1231,8 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     const contribution = contributions.find((item) => item.eventId === event.id && item.staffId === person.id);
     const paid = !exempt && !!contribution?.paid;
     const paidAmount = paid ? Number(contribution.amount || 0) : 0;
+    const decidedAmount = paid ? Math.min(paidAmount, Number(event.amount || 0)) : 0;
+    const extraAmount = paid ? Math.max(0, paidAmount - Number(event.amount || 0)) : 0;
     const dueAmount = exempt || paid ? 0 : Number(event.amount || 0);
     return {
       eventId: event.id,
@@ -1217,6 +1245,8 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
       statusDate: person.statusDate || '',
       status: exempt ? 'Exempt' : paid ? 'Paid' : 'Unpaid',
       paidAmount,
+      decidedAmount,
+      extraAmount,
       dueAmount
     };
   }));
@@ -1239,13 +1269,19 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const accountRecords = selectedEvents.map((event) => {
     const eventContributions = detailRecords.filter((record) => record.eventId === event.id);
     const collected = eventContributions.reduce((sum, record) => sum + record.paidAmount, 0);
+    const decidedCollected = eventContributions.reduce((sum, record) => sum + record.decidedAmount, 0);
+    const extraCollected = eventContributions.reduce((sum, record) => sum + record.extraAmount, 0);
     const due = eventContributions.reduce((sum, record) => sum + record.dueAmount, 0);
+    const totalNeeded = eventContributions.filter((record) => record.status !== 'Exempt').length * Number(event.amount || 0);
     const handedOver = handovers.filter((handover) => handover.eventId === event.id).reduce((sum, handover) => sum + Number(handover.amount || 0), 0);
     const spent = expenses.filter((expense) => expense.eventId === event.id).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
     return {
       eventId: event.id,
       eventName: event.name,
       eventDate: event.date,
+      totalNeeded,
+      decidedCollected,
+      extraCollected,
       collected,
       due,
       handedOver,
@@ -1274,13 +1310,13 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
   const visibleDetails = detailRecords.filter(filterDetails).sort((a, b) => a.eventDate.localeCompare(b.eventDate) || a.eventName.localeCompare(b.eventName) || sortByStaffNumber(a, b));
   const visibleStaff = staffRecords.filter(filterStaff).sort(sortByStaffNumber);
   const rows = view === 'account'
-    ? accountRecords.map((record) => [record.eventDate, record.eventName, currency(record.collected), currency(record.due), currency(record.handedOver), currency(record.spent), currency(record.guildBalance), currency(record.eventBalance)])
+    ? accountRecords.map((record) => [record.eventDate, record.eventName, currency(record.totalNeeded), currency(record.decidedCollected), currency(record.extraCollected), currency(record.due), currency(record.handedOver), currency(record.spent), currency(record.guildBalance), currency(record.eventBalance)])
     : view === 'staff'
     ? visibleStaff.map((record) => [record.employeeId, record.staffName, record.category, record.serviceStatus, record.paidEvents, record.unpaidEvents, currency(record.paidAmount), currency(record.dueAmount)])
     : visibleDetails.map((record) => [record.eventName, record.eventDate, record.employeeId, record.staffName, record.category, record.serviceStatus, record.status, currency(record.paidAmount), currency(record.dueAmount)]);
 
   const headers = view === 'account'
-    ? ['Date', 'Event', 'Collected', 'Not Collected', 'Handed Over', 'Expenses', 'Guild Balance', 'Event Balance']
+    ? ['Date', 'Event', 'Total Needed', 'Decided Collected', 'Extra', 'Not Collected', 'Handed Over', 'Expenses', 'Guild Balance', 'Event Balance']
     : view === 'staff'
     ? ['ID', 'Staff', 'Category', 'Service Status', 'Paid Events', 'Unpaid Events', 'Total Paid', 'Total Not Paid']
     : ['Event', 'Date', 'ID', 'Staff', 'Category', 'Service Status', 'Payment Status', 'Paid', 'Not Paid'];
@@ -1294,6 +1330,9 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     : rows;
 
   const collected = detailRecords.reduce((sum, record) => sum + record.paidAmount, 0);
+  const totalNeeded = accountRecords.reduce((sum, record) => sum + record.totalNeeded, 0);
+  const decidedCollected = detailRecords.reduce((sum, record) => sum + record.decidedAmount, 0);
+  const extraCollected = detailRecords.reduce((sum, record) => sum + record.extraAmount, 0);
   const due = detailRecords.reduce((sum, record) => sum + record.dueAmount, 0);
   const spent = selectedEvents.reduce((sum, event) => sum + expenses.filter((expense) => expense.eventId === event.id).reduce((inner, expense) => inner + Number(expense.amount || 0), 0), 0);
   const handedOver = selectedEvents.reduce((sum, event) => sum + handovers.filter((handover) => handover.eventId === event.id).reduce((inner, handover) => inner + Number(handover.amount || 0), 0), 0);
@@ -1328,14 +1367,16 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
     pdfHeadFontSize: singleEventPaymentPdf ? 9 : 8.5,
     pdfColumnStyles: accountView
       ? {
-        0: { cellWidth: 22 },
-        1: { cellWidth: 58 },
-        2: { cellWidth: 28, halign: 'right', overflow: 'visible' },
-        3: { cellWidth: 30, halign: 'right', overflow: 'visible' },
-        4: { cellWidth: 30, halign: 'right', overflow: 'visible' },
-        5: { cellWidth: 28, halign: 'right', overflow: 'visible' },
-        6: { cellWidth: 30, halign: 'right', overflow: 'visible' },
-        7: { cellWidth: 30, halign: 'right', overflow: 'visible' }
+        0: { cellWidth: 18 },
+        1: { cellWidth: 48 },
+        2: { cellWidth: 25, halign: 'right', overflow: 'visible' },
+        3: { cellWidth: 28, halign: 'right', overflow: 'visible' },
+        4: { cellWidth: 20, halign: 'right', overflow: 'visible' },
+        5: { cellWidth: 27, halign: 'right', overflow: 'visible' },
+        6: { cellWidth: 26, halign: 'right', overflow: 'visible' },
+        7: { cellWidth: 24, halign: 'right', overflow: 'visible' },
+        8: { cellWidth: 27, halign: 'right', overflow: 'visible' },
+        9: { cellWidth: 27, halign: 'right', overflow: 'visible' }
       }
       : singleEventPaymentPdf
       ? {
@@ -1371,13 +1412,16 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         7: { cellWidth: 22, halign: 'right', overflow: 'visible' },
         8: { cellWidth: 22, halign: 'right', overflow: 'visible' }
       },
-    stats: { events: selectedEvents.length, collected, due, handedOver, spent, paidCount, unpaidCount },
-    summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nCollected: ${currency(collected)}\nNot Collected: ${currency(due)}\nHanded Over: ${currency(handedOver)}\nExpenses: ${currency(spent)}\nGuild Balance: ${currency(collected - handedOver)}\nEvent Balance: ${currency(handedOver - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
+    stats: { events: selectedEvents.length, totalNeeded, decidedCollected, extraCollected, collected, due, handedOver, spent, paidCount, unpaidCount },
+    summaryText: `${APP_NAME}\n${title}\nEvents: ${selectedEvents.length}\nTotal Needed: ${currency(totalNeeded)}\nDecided Collected: ${currency(decidedCollected)}\nExtra Collected: ${currency(extraCollected)}\nActual Collected: ${currency(collected)}\nNot Collected: ${currency(due)}\nHanded Over: ${currency(handedOver)}\nExpenses: ${currency(spent)}\nGuild Balance: ${currency(collected - handedOver)}\nEvent Balance: ${currency(handedOver - spent)}\nPaid records: ${paidCount}\nUnpaid records: ${unpaidCount}`,
     sheets: [
       ['Account Sheet', accountRecords.map((record) => ({
         Date: record.eventDate,
         Event: record.eventName,
-        Collected: record.collected,
+        'Total Needed': record.totalNeeded,
+        'Decided Collected': record.decidedCollected,
+        'Extra Collected': record.extraCollected,
+        'Actual Collected': record.collected,
         'Not Collected': record.due,
         'Handed Over': record.handedOver,
         Expenses: record.spent,
@@ -1395,6 +1439,8 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         'Service Status': record.serviceStatus,
         'Status Date': record.statusDate,
         Status: record.status,
+        'Decided Amount': record.decidedAmount,
+        Extra: record.extraAmount,
         Paid: record.paidAmount,
         'Not Paid': record.dueAmount
       }))],
@@ -1416,7 +1462,10 @@ function buildReport({ mode, eventId, eventIds, range, view, status, staff, even
         return {
           Event: event.name,
           Date: event.date,
-          Collected: account.collected,
+          'Total Needed': account.totalNeeded,
+          'Decided Collected': account.decidedCollected,
+          'Extra Collected': account.extraCollected,
+          'Actual Collected': account.collected,
           'Not Collected': account.due,
           'Handed Over': account.handedOver,
           Expenses: account.spent,
