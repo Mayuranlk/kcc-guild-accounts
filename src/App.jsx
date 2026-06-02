@@ -361,11 +361,28 @@ function PublicStatusPage({ eventId }) {
     return <main className="public-page" onContextMenu={(event) => event.preventDefault()}><section className="public-card"><h1>Collection Status</h1><p>{error}</p></section></main>;
   }
 
-  const totalNeeded = Number(status.totalNeeded ?? status.expected ?? 0);
-  const decidedCollected = Number(status.decidedCollected ?? Math.max(0, Number(status.collected || 0) - Number(status.extraCollected || 0)));
-  const extraCollected = Number(status.extraCollected || 0);
-  const collected = Number(status.collected || 0);
-  const notCollected = Number(status.notCollected || Math.max(0, totalNeeded - decidedCollected));
+  const amountPerStaff = Number(status.amountPerStaff || 0);
+  const paidRows = (status.paidRows || [])
+    .map((row) => {
+      const amount = Number(row.amount || 0);
+      const extraAmount = Math.max(Number(row.extraAmount || 0), Math.max(0, amount - amountPerStaff));
+      return {
+        ...row,
+        amount,
+        decidedAmount: Math.min(amount, amountPerStaff),
+        extraAmount
+      };
+    })
+    .sort(sortByStaffNumber);
+  const unpaidRows = (status.unpaidRows || [])
+    .map((row) => ({ ...row, due: Number(row.due || amountPerStaff) }))
+    .sort(sortByStaffNumber);
+  const exemptRows = (status.exemptRows || []).sort(sortByStaffNumber);
+  const totalNeeded = Number(status.totalNeeded ?? status.expected ?? (paidRows.length + unpaidRows.length) * amountPerStaff);
+  const decidedCollected = paidRows.reduce((sum, row) => sum + Number(row.decidedAmount || 0), 0);
+  const extraCollected = paidRows.reduce((sum, row) => sum + Number(row.extraAmount || 0), 0);
+  const collected = decidedCollected + extraCollected;
+  const notCollected = unpaidRows.reduce((sum, row) => sum + Number(row.due || 0), 0);
 
   return (
     <main className="public-page" onContextMenu={(event) => event.preventDefault()}>
@@ -374,7 +391,7 @@ function PublicStatusPage({ eventId }) {
           <div>
             <p>Kilinochchi Central College Guild</p>
             <h1>{status.eventName}</h1>
-            <span>{status.eventDate} | {currency(status.amountPerStaff)} per staff</span>
+            <span>{status.eventDate} | {currency(amountPerStaff)} per staff</span>
           </div>
         </header>
         <div className="stats public-stats">
@@ -382,13 +399,13 @@ function PublicStatusPage({ eventId }) {
           <Stat title="Collected" value={currency(collected)} icon={Banknote} tone="good" />
           <Stat title="Not Collected" value={currency(notCollected)} icon={XCircle} tone="bad" />
           <Stat title="Extra Collected" value={currency(extraCollected)} icon={CheckCircle2} tone="good" />
-          <Stat title="Paid / Unpaid" value={`${status.paidCount} / ${status.unpaidCount}`} icon={Users} tone="warn" />
+          <Stat title="Paid / Unpaid" value={`${paidRows.length} / ${unpaidRows.length}`} icon={Users} tone="warn" />
         </div>
         <div className="public-lists">
-          <PublicStatusList title={`Paid Staff (${status.paidRows.length})`} rows={status.paidRows} paid />
-          <PublicStatusList title={`Not Paid Staff (${status.unpaidRows.length})`} rows={status.unpaidRows} />
+          <PublicStatusList title={`Paid Staff (${paidRows.length})`} rows={paidRows} paid />
+          <PublicStatusList title={`Not Paid Staff (${unpaidRows.length})`} rows={unpaidRows} />
         </div>
-        {status.exemptRows?.length > 0 && <PublicStatusList title={`Exempt Staff (${status.exemptRows.length})`} rows={status.exemptRows} />}
+        {exemptRows.length > 0 && <PublicStatusList title={`Exempt Staff (${exemptRows.length})`} rows={exemptRows} />}
         <p className="public-updated">Updated: {new Date(status.updatedAt).toLocaleString()}</p>
       </section>
     </main>
@@ -404,7 +421,7 @@ function PublicStatusList({ title, rows, paid }) {
           <div className={`public-row ${paid ? 'paid-row' : 'unpaid-row'} ${row.extraAmount > 0 ? 'extra-row' : ''}`} key={`${row.employeeId}-${index}`}>
             <span>{row.employeeId}</span>
             <strong>{row.name}</strong>
-            <em>{row.extraAmount > 0 ? `${row.category} | Extra ${currency(row.extraAmount)}` : row.category}</em>
+            <em>{row.category}{row.extraAmount > 0 && <small className="extra-chip">Extra {currency(row.extraAmount)}</small>}</em>
             <b>{currency(paid ? row.amount : row.due)}</b>
           </div>
         ))}
